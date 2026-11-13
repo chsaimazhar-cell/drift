@@ -3,8 +3,10 @@
 import importlib.util
 import os
 import socket
+import subprocess
 import json
 import threading
+import uuid
 from urllib.request import urlopen
 import tempfile
 import unittest
@@ -103,6 +105,96 @@ class DriftHelperTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             worker.join(timeout=5)
+
+    def test_non_mp4_media_is_converted_to_compatible_mp4(self):
+        ffmpeg = drift.find_ffmpeg()
+        if not ffmpeg:
+            self.skipTest("FFmpeg is not available in this test environment.")
+        encoders = subprocess.run(
+            [ffmpeg, "-hide_banner", "-encoders"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        if "libx264" not in encoders:
+            self.skipTest("This FFmpeg build does not include the libx264 encoder.")
+
+        drift.init_db()
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "source.avi"
+            subprocess.run(
+                [
+                    ffmpeg, "-y", "-f", "lavfi", "-i",
+                    "color=c=black:s=64x64:d=1", "-c:v", "mpeg4",
+                    "-an", str(source),
+                ],
+                capture_output=True,
+                check=True,
+            )
+            converted = drift.ensure_compatible_mp4(source, "unit-conversion")
+            self.assertTrue(converted.is_file())
+            self.assertEqual(converted.suffix.lower(), ".mp4")
+            media_info = drift.probe_media(converted)
+            self.assertEqual(media_info["video"][0]["codec"], "h264")
+            self.assertEqual(media_info["video"][0]["pix_fmt"], "yuv420p")
+            self.assertIn("mp4", media_info["container"].split(","))
+
+    def test_download_file_streaming_and_http_range(self):
+        drift.init_db()
+        with tempfile.TemporaryDirectory() as temp:
+            media_path = Path(temp) / "sample.mp4"
+            media_bytes = b"0123456789abcdef"
+            media_path.write_bytes(media_bytes)
+            job_id = uuid.uuid4().hex
+            timestamp = drift.now()
+            drift.insert_job({
+                "id": job_id,
+                "status": "ready",
+                "phase": "Ready",
+                "progress": 100,
+                "downloaded_bytes": len(media_bytes),
+                "total_bytes": len(media_bytes),
+                "speed": None,
+                "eta": None,
+                "url": "https://www.youtube.com/watch?v=test",
+                "quality": "best",
+                "format": "MP4",
+                "platform": "YouTube",
+                "title": "Sample file",
+                "thumbnail": None,
+                "filename": "Sample_file.mp4",
+                "file_size": len(media_bytes),
+                "message": "Ready",
+                "error": None,
+                "created_at": timestamp,
+                "updated_at": timestamp,
+                "completed_at": timestamp,
+                "job_dir": temp,
+                "file_path": str(media_path),
+                "duration": "0:01",
+            })
+            server = drift.ThreadingHTTPServer(("127.0.0.1", 0), drift.Handler)
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            base_url = f"http://127.0.0.1:{server.server_port}"
+            try:
+                with urlopen(base_url + f"/api/downloads/{job_id}/file", timeout=5) as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(response.read(), media_bytes)
+                    self.assertEqual(response.headers.get("Accept-Ranges"), "bytes")
+
+                request = __import__("urllib.request", fromlist=["Request"]).Request(
+                    base_url + f"/api/downloads/{job_id}/file",
+                    headers={"Range": "bytes=2-5"},
+                )
+                with urlopen(request, timeout=5) as response:
+                    self.assertEqual(response.status, 206)
+                    self.assertEqual(response.read(), b"2345")
+                    self.assertEqual(response.headers.get("Content-Range"), "bytes 2-5/16")
+            finally:
+                server.shutdown()
+                server.server_close()
+                worker.join(timeout=5)
 
 
 if __name__ == "__main__":
