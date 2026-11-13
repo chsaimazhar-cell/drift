@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import functools
-import importlib
 import ipaddress
 import json
 import mimetypes
@@ -11,7 +10,6 @@ import shutil
 import socket
 import sqlite3
 import subprocess
-import sys
 import tempfile
 import threading
 import time
@@ -23,33 +21,21 @@ from pathlib import Path
 from typing import Generator
 from urllib.parse import quote, unquote, urlparse
 
-def _ensure_package(import_name: str, pip_name: str):
-    """Import a package; if it is missing, install it with the SAME Python that is running this file."""
-    try:
-        return importlib.import_module(import_name)
-    except ImportError:
-        pass
-    if os.getenv("DRIFT_NO_AUTO_INSTALL") == "1":
-        return None
-    print(f"[setup] '{pip_name}' is missing. Installing it now (one time only)...", flush=True)
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", pip_name])
-        importlib.invalidate_caches()
-        return importlib.import_module(import_name)
-    except Exception as exc:  # noqa: BLE001
-        print(f"[setup] Could not install {pip_name}: {exc}", flush=True)
-        return None
+# Dependencies are installed explicitly from requirements.txt. Never run pip during import.
+try:
+    import certifi
+except ImportError:
+    certifi = None
 
-
-_certifi = _ensure_package("certifi", "certifi")
-CERTIFI_CA = _certifi.where() if _certifi else None
+CERTIFI_CA = certifi.where() if certifi else None
 if CERTIFI_CA:
     os.environ.setdefault("SSL_CERT_FILE", CERTIFI_CA)
     os.environ.setdefault("REQUESTS_CA_BUNDLE", CERTIFI_CA)
 
-yt_dlp = _ensure_package("yt_dlp", "yt-dlp")
-# imageio-ffmpeg ships a ready-made ffmpeg program, so the user does not need to install FFmpeg by hand.
-_ensure_package("imageio_ffmpeg", "imageio-ffmpeg")
+try:
+    import yt_dlp
+except ImportError:
+    yt_dlp = None
 
 PORT = int(os.getenv("PORT") or os.getenv("DRIFT_PORT") or "5000")   # Render gives us PORT
 HOST = os.getenv("DRIFT_HOST") or ("0.0.0.0" if os.getenv("PORT") else "127.0.0.1")
@@ -1585,6 +1571,8 @@ def validate_public_url(raw_url: str):
         parsed = urlparse(raw_url.strip())
         if parsed.scheme.lower() not in ALLOWED_SCHEMES or not parsed.hostname:
             return False, "Only HTTP(S) URLs are supported."
+        if parsed.username is not None or parsed.password is not None:
+            return False, "URLs containing usernames or passwords are not allowed."
         host = parsed.hostname.lower().rstrip(".")
         try:
             ip = ipaddress.ip_address(host)
@@ -1600,7 +1588,7 @@ def validate_public_url(raw_url: str):
             infos = socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
             for info in infos:
                 ip = ipaddress.ip_address(info[4][0])
-                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+                if not ip.is_global:
                     return False, "Private or internal addresses are not allowed."
         except socket.gaierror:
             return False, "The hostname could not be resolved."
@@ -1654,7 +1642,7 @@ def clean_error(exc: Exception) -> str:
     if "certificate_verify_failed" in low or "unable to get local issuer" in low:
         return "TLS certificate verification failed. Update certifi and yt-dlp."
     if "ffmpeg" in low and ("not found" in low or "not installed" in low):
-        return "FFmpeg is required for this media. Restart Drift so it can set FFmpeg up."
+        return "FFmpeg is required for this media. Install FFmpeg or the imageio-ffmpeg package, then restart Drift."
     if "requested format is not available" in low:
         return "That quality is not available for this source. Choose another quality and try again."
     if ("login" in low or "log in" in low or "sign in" in low or "cookies" in low
@@ -1761,7 +1749,7 @@ def probe_media(media: Path) -> dict:
     """Read codecs with `ffmpeg -i` (works without ffprobe)."""
     ffmpeg = find_ffmpeg()
     if not ffmpeg:
-        raise RuntimeError("FFmpeg is not available. Restart Drift so it can install it.")
+        raise RuntimeError("FFmpeg is not available. Install FFmpeg or the imageio-ffmpeg package, then restart Drift.")
     out = subprocess.run([ffmpeg, "-hide_banner", "-i", str(media)], capture_output=True, text=True,
                          encoding="utf-8", errors="replace").stderr
     info = {"container": "", "video": [], "audio": []}
