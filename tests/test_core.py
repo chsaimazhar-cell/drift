@@ -3,6 +3,7 @@
 import importlib.util
 import os
 import socket
+import subprocess
 import json
 import threading
 from urllib.request import urlopen
@@ -103,6 +104,39 @@ class DriftHelperTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             worker.join(timeout=5)
+
+    def test_non_mp4_media_is_converted_to_compatible_mp4(self):
+        ffmpeg = drift.find_ffmpeg()
+        if not ffmpeg:
+            self.skipTest("FFmpeg is not available in this test environment.")
+        encoders = subprocess.run(
+            [ffmpeg, "-hide_banner", "-encoders"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        if "libx264" not in encoders:
+            self.skipTest("This FFmpeg build does not include the libx264 encoder.")
+
+        drift.init_db()
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "source.avi"
+            subprocess.run(
+                [
+                    ffmpeg, "-y", "-f", "lavfi", "-i",
+                    "color=c=black:s=64x64:d=1", "-c:v", "mpeg4",
+                    "-an", str(source),
+                ],
+                capture_output=True,
+                check=True,
+            )
+            converted = drift.ensure_compatible_mp4(source, "unit-conversion")
+            self.assertTrue(converted.is_file())
+            self.assertEqual(converted.suffix.lower(), ".mp4")
+            media_info = drift.probe_media(converted)
+            self.assertEqual(media_info["video"][0]["codec"], "h264")
+            self.assertEqual(media_info["video"][0]["pix_fmt"], "yuv420p")
+            self.assertIn("mp4", media_info["container"].split(","))
 
 
 if __name__ == "__main__":
