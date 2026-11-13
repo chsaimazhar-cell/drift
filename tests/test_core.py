@@ -3,6 +3,9 @@
 import importlib.util
 import os
 import socket
+import json
+import threading
+from urllib.request import urlopen
 import tempfile
 import unittest
 from pathlib import Path
@@ -79,6 +82,27 @@ class DriftHelperTests(unittest.TestCase):
             self.assertTrue(drift.rate_limit(handler, "unit-test", 2, 60))
             self.assertTrue(drift.rate_limit(handler, "unit-test", 2, 60))
             self.assertFalse(drift.rate_limit(handler, "unit-test", 2, 60))
+
+
+    def test_http_server_health_and_frontend_smoke(self):
+        drift.init_db()
+        server = drift.ThreadingHTTPServer(("127.0.0.1", 0), drift.Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        try:
+            with urlopen(base_url + "/api/health", timeout=5) as response:
+                self.assertEqual(response.status, 200)
+                health = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(health["status"], "ok")
+            with urlopen(base_url + "/", timeout=5) as response:
+                self.assertEqual(response.status, 200)
+                page = response.read().decode("utf-8")
+            self.assertIn("<title>", page)
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join(timeout=5)
 
 
 if __name__ == "__main__":
