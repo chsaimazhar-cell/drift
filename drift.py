@@ -49,6 +49,7 @@ MAX_TOTAL_JOBS = MAX_ACTIVE_JOBS + MAX_QUEUED_JOBS
 MAX_HTTP_CONNECTIONS = max(4, int(os.getenv("DRIFT_MAX_HTTP_CONNECTIONS", "32")))
 FFMPEG_PROBE_TIMEOUT_SECONDS = max(5, int(os.getenv("DRIFT_FFMPEG_PROBE_TIMEOUT_SECONDS", "30")))
 FFMPEG_CONVERSION_TIMEOUT_SECONDS = max(30, int(os.getenv("DRIFT_FFMPEG_CONVERSION_TIMEOUT_SECONDS", "900")))
+HTTP_SOCKET_TIMEOUT_SECONDS = max(5, int(os.getenv("DRIFT_HTTP_SOCKET_TIMEOUT_SECONDS", "30")))
 DOWNLOAD_ROOT = Path(os.getenv("DRIFT_DOWNLOAD_ROOT", str(Path(tempfile.gettempdir()) / "drift-downloads")))
 DOWNLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 DB_PATH = Path(os.getenv("DRIFT_DB_PATH", str(DOWNLOAD_ROOT / "drift.sqlite3")))
@@ -635,6 +636,34 @@ def run_download(job_id: str, url: str, quality: str) -> None:
         CANCEL_EVENTS.pop(job_id, None)
 
 
+def recover_interrupted_jobs() -> int:
+    """Mark jobs left active by a process restart as failed and remove their partial files."""
+    with DB_LOCK, db() as conn:
+        rows = conn.execute(
+            "SELECT id, job_dir FROM jobs WHERE status IN ('queued','downloading','processing')"
+        ).fetchall()
+        if rows:
+            conn.execute(
+                """UPDATE jobs SET status='failed', phase='Failed',
+                   message='The download service restarted before this job finished. Please try again.',
+                   error='The service restarted during processing.', updated_at=?
+                   WHERE status IN ('queued','downloading','processing')""",
+                (now(),),
+            )
+    root = DOWNLOAD_ROOT.resolve()
+    for row in rows:
+        raw_dir = row["job_dir"]
+        if not raw_dir:
+            continue
+        try:
+            job_dir = Path(raw_dir).resolve()
+            if job_dir.parent == root and job_dir.name.startswith("drift-") and job_dir.is_dir():
+                shutil.rmtree(job_dir, ignore_errors=True)
+        except (OSError, RuntimeError):
+            continue
+    return len(rows)
+
+
 def cleanup_once() -> None:
     cutoff = now() - JOB_TTL_SECONDS
     with DB_LOCK, db() as conn:
@@ -667,6 +696,10 @@ def json_bytes(data: dict) -> bytes:
 class Handler(BaseHTTPRequestHandler):
     server_version = "Drift"
     sys_version = ""
+
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(HTTP_SOCKET_TIMEOUT_SECONDS)
 
     def log_message(self, fmt, *args):
         print(f"[{time.strftime('%H:%M:%S')}] {self.client_address[0]} {fmt % args}")
@@ -931,6 +964,9 @@ class LimitedThreadingHTTPServer(ThreadingHTTPServer):
 
 def main():
     init_db()
+    recovered = recover_interrupted_jobs()
+    if recovered:
+        print(f"Marked {recovered} interrupted job(s) as failed after restart.", flush=True)
     threading.Thread(target=cleanup_loop, daemon=True, name="drift-cleanup").start()
     server=LimitedThreadingHTTPServer((HOST,PORT),Handler)
     print(f"Drift backend listening on http://{HOST}:{PORT}")
