@@ -82,7 +82,7 @@ CREATE INDEX IF NOT EXISTS idx_drift_jobs_object_expiry
 --   SELECT id FROM drift_jobs
 --   WHERE status = 'queued' AND available_at <= NOW()
 --   ORDER BY available_at, created_at
---   FOR UPDATE SKIP LOCKED LIMIT 1;
+--   LIMIT 1 FOR UPDATE SKIP LOCKED;
 -- Then update that row to status='downloading', set lease_owner and
 -- lease_expires_at, increment attempts, and commit in the same transaction.
 --
