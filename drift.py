@@ -840,8 +840,19 @@ def safe_filename(name: str) -> str:
     return name + ".mp4"
 
 
-def progress_hook(job_id: str):
+def check_worker_lease(lease_lost_event=None) -> None:
+    """Abort downloader work as soon as its distributed worker lease is lost."""
+    if lease_lost_event is not None and lease_lost_event.is_set():
+        raise WorkerLeaseLost("Worker lease was lost; stopping media processing.")
+
+
+class WorkerLeaseLost(RuntimeError):
+    """Raised when a worker no longer owns the job lease."""
+
+
+def progress_hook(job_id: str, lease_lost_event=None):
     def hook(data: dict):
+        check_worker_lease(lease_lost_event)
         event = CANCEL_EVENTS.get(job_id)
         if event and event.is_set():
             raise DownloadCancelled()
@@ -861,8 +872,9 @@ def progress_hook(job_id: str):
     return hook
 
 
-def postprocessor_hook(job_id: str):
+def postprocessor_hook(job_id: str, lease_lost_event=None):
     def hook(data: dict):
+        check_worker_lease(lease_lost_event)
         event = CANCEL_EVENTS.get(job_id)
         if event and event.is_set():
             raise DownloadCancelled()
@@ -971,6 +983,7 @@ def find_media(job_dir: Path) -> Path | None:
 
 def probe_media(media: Path) -> dict:
     """Read codecs with `ffmpeg -i` (works without ffprobe)."""
+    check_worker_lease(lease_lost_event)
     ffmpeg = find_ffmpeg()
     if not ffmpeg:
         raise RuntimeError("FFmpeg is not available. Install FFmpeg or the imageio-ffmpeg package, then restart Drift.")
@@ -1010,7 +1023,7 @@ def probe_media(media: Path) -> dict:
     return info
 
 
-def ensure_compatible_mp4(media: Path, job_id: str) -> Path:
+def ensure_compatible_mp4(media: Path, job_id: str, lease_lost_event=None) -> Path:
     """Return an MP4 (H.264 + AAC, yuv420p) that plays in Windows Media Player, phones, WhatsApp, everything.
 
     Files that are already compatible are left untouched (fast). Otherwise only what is needed is re-encoded.
@@ -1059,6 +1072,7 @@ def ensure_compatible_mp4(media: Path, job_id: str) -> Path:
                 _, error_output = process.communicate(timeout=min(0.5, remaining))
                 break
             except subprocess.TimeoutExpired:
+                check_worker_lease(lease_lost_event)
                 event = CANCEL_EVENTS.get(job_id)
                 if event and event.is_set():
                     process.terminate()
@@ -1105,10 +1119,11 @@ def ydl_common_options() -> dict:
     return opts
 
 
-def run_download(job_id: str, url: str, quality: str) -> None:
+def run_download(job_id: str, url: str, quality: str, *, lease_lost_event=None) -> None:
     job_dir = None
     uploaded_object_key = None
     try:
+        check_worker_lease(lease_lost_event)
         early = CANCEL_EVENTS.get(job_id)
         if early and early.is_set():
             update_job(job_id, status="cancelled", phase="Cancelled", message="Download cancelled.")
@@ -1123,25 +1138,29 @@ def run_download(job_id: str, url: str, quality: str) -> None:
             "format": format_selector(quality), "merge_output_format": "mp4",
             "outtmpl": str(job_dir / "%(title).180s.%(ext)s"),
             "restrictfilenames": True, "windowsfilenames": True,
-            "max_filesize": MAX_DOWNLOAD_BYTES, "progress_hooks": [progress_hook(job_id)],
-            "postprocessor_hooks": [postprocessor_hook(job_id)],
+            "max_filesize": MAX_DOWNLOAD_BYTES, "progress_hooks": [progress_hook(job_id, lease_lost_event)],
+            "postprocessor_hooks": [postprocessor_hook(job_id, lease_lost_event)],
             "continuedl": True, "retries": 5, "fragment_retries": 5,
         }
         with yt_dlp.YoutubeDL(options) as ydl:
             info = ydl.extract_info(url, download=True)
+        check_worker_lease(lease_lost_event)
         event = CANCEL_EVENTS.get(job_id)
         if event and event.is_set(): raise DownloadCancelled()
         media = MEDIA_STORAGE.find_media(job_dir)
         if media is None: raise RuntimeError("The media file was not created.")
-        media = ensure_compatible_mp4(media, job_id)
+        media = ensure_compatible_mp4(media, job_id, lease_lost_event)
+        check_worker_lease(lease_lost_event)
         event = CANCEL_EVENTS.get(job_id)
         if event and event.is_set(): raise DownloadCancelled()
+        check_worker_lease(lease_lost_event)
         size = MEDIA_STORAGE.size(media)
         if size > MAX_DOWNLOAD_BYTES: raise DownloadTooLarge("The final media file exceeded Drift's 500 MB limit.")
         title = info.get("title") or "Drift video"
         duration = info.get("duration_string")
         final_name = safe_filename(title)
         final_path = job_dir / final_name
+        check_worker_lease(lease_lost_event)
         MEDIA_STORAGE.finalize(media, final_path)
         if PRIVATE_MEDIA_STORE is None:
             ready_updates = {
@@ -1156,6 +1175,7 @@ def run_download(job_id: str, url: str, quality: str) -> None:
         else:
             object_key = f"jobs/{job_id}/{uuid.uuid4().hex}.mp4"
             stored = PRIVATE_MEDIA_STORE.put_file(final_path, object_key, "video/mp4", final_name)
+            check_worker_lease(lease_lost_event)
             uploaded_object_key = stored.object_key
             if stored.object_key != object_key or stored.size_bytes != size or stored.content_type != "video/mp4":
                 raise RuntimeError("Private storage returned inconsistent media metadata.")
@@ -1171,6 +1191,11 @@ def run_download(job_id: str, url: str, quality: str) -> None:
             if mark_job_ready(job_id, **ready_updates):
                 uploaded_object_key = None  # The repository now owns this object reference.
             MEDIA_STORAGE.delete_workspace(job_dir)
+    except WorkerLeaseLost:
+        # The new owner is responsible for job state; this worker only cleans its artifacts.
+        if job_dir is not None:
+            shutil.rmtree(job_dir, ignore_errors=True)
+        raise
     except DownloadCancelled:
         update_job(job_id, status="cancelled", phase="Cancelled", message="Download cancelled.")
         if job_dir is not None:
