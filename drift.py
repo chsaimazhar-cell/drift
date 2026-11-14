@@ -232,6 +232,53 @@ class SQLiteJobRepository:
             conn.commit()
             return True
 
+    def recover_interrupted(self) -> list[dict]:
+        with DB_LOCK, db() as conn:
+            rows = conn.execute(
+                "SELECT id, job_dir FROM jobs WHERE status IN ('queued','downloading','processing')"
+            ).fetchall()
+            if rows:
+                conn.execute(
+                    """UPDATE jobs SET status='failed', phase='Failed',
+                       message='The download service restarted before this job finished. Please try again.',
+                       error='The service restarted during processing.', updated_at=?
+                       WHERE status IN ('queued','downloading','processing')""",
+                    (now(),),
+                )
+            return [dict(row) for row in rows]
+
+    def expired_jobs(self, cutoff: float) -> dict:
+        with DB_LOCK, db() as conn:
+            rows = conn.execute(
+                "SELECT id, job_dir, status, updated_at FROM jobs WHERE updated_at < ?",
+                (cutoff,),
+            ).fetchall()
+            expired = [dict(row) for row in rows if row["status"] not in {"queued", "downloading", "processing"}]
+            for row in expired:
+                conn.execute("DELETE FROM jobs WHERE id=?", (row["id"],))
+            tracked = [row[0] for row in conn.execute(
+                "SELECT job_dir FROM jobs WHERE job_dir IS NOT NULL"
+            ).fetchall()]
+            conn.commit()
+        return {"expired": expired, "tracked": tracked}
+
+    def active_count(self) -> int:
+        with DB_LOCK, db() as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE status IN ('queued','downloading','processing')"
+            ).fetchone()[0]
+
+    def cancel_active(self, job_id: str) -> None:
+        with DB_LOCK, db() as conn:
+            conn.execute(
+                """UPDATE jobs SET status='cancelled', phase='Cancelled',
+                   message='Cancelling download…', updated_at=?
+                   WHERE id=? AND status IN ('queued','downloading','processing')""",
+                (now(), job_id),
+            )
+            conn.commit()
+
+
 
 # The current adapter is intentionally local-only. A managed database adapter
 # can replace this object without changing the HTTP handlers or downloader.
@@ -677,18 +724,7 @@ def run_download(job_id: str, url: str, quality: str) -> None:
 
 def recover_interrupted_jobs() -> int:
     """Mark jobs left active by a process restart as failed and remove their partial files."""
-    with DB_LOCK, db() as conn:
-        rows = conn.execute(
-            "SELECT id, job_dir FROM jobs WHERE status IN ('queued','downloading','processing')"
-        ).fetchall()
-        if rows:
-            conn.execute(
-                """UPDATE jobs SET status='failed', phase='Failed',
-                   message='The download service restarted before this job finished. Please try again.',
-                   error='The service restarted during processing.', updated_at=?
-                   WHERE status IN ('queued','downloading','processing')""",
-                (now(),),
-            )
+    rows = JOB_REPOSITORY.recover_interrupted()
     root = DOWNLOAD_ROOT.resolve()
     for row in rows:
         raw_dir = row["job_dir"]
@@ -705,14 +741,8 @@ def recover_interrupted_jobs() -> int:
 
 def cleanup_once() -> None:
     cutoff = now() - JOB_TTL_SECONDS
-    with DB_LOCK, db() as conn:
-        rows = conn.execute("SELECT id, job_dir, status, updated_at FROM jobs WHERE updated_at < ?", (cutoff,)).fetchall()
-        for row in rows:
-            if row[2] in {"queued", "downloading", "processing"}: continue
-            conn.execute("DELETE FROM jobs WHERE id=?", (row[0],))
-        conn.commit()
-        tracked = {Path(r[0]).name for r in conn.execute(
-            "SELECT job_dir FROM jobs WHERE job_dir IS NOT NULL").fetchall()}
+    cleanup = JOB_REPOSITORY.expired_jobs(cutoff)
+    tracked = {Path(path).name for path in cleanup["tracked"] if path}
     for directory in DOWNLOAD_ROOT.iterdir():
         try:
             if directory.name in tracked: continue
@@ -846,8 +876,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/api/health":
-            with DB_LOCK, db() as conn:
-                active = conn.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','downloading','processing')").fetchone()[0]
+            active = JOB_REPOSITORY.active_count()
             return self.send_json({"status":"ok","service":"drift-backend","downloader":yt_dlp is not None,
                                    "ffmpeg":find_ffmpeg() is not None,"active_jobs":active,
                                    "max_active_jobs":MAX_ACTIVE_JOBS})
@@ -971,13 +1000,7 @@ class Handler(BaseHTTPRequestHandler):
         if not job: return self.send_json({"success":False,"message":"Download job not found or expired."},404)
         if job["status"] in {"ready","failed","cancelled"}: return self.send_json({"success":True,"job":job})
         event=CANCEL_EVENTS.setdefault(job_id,threading.Event()); event.set()
-        with DB_LOCK, db() as conn:
-            conn.execute(
-                """UPDATE jobs SET status='cancelled', phase='Cancelled', message='Cancelling download…', updated_at=?
-                   WHERE id=? AND status IN ('queued','downloading','processing')""",
-                (now(), job_id),
-            )
-            conn.commit()
+        JOB_REPOSITORY.cancel_active(job_id)
         return self.send_json({"success":True,"job":public_job(get_job(job_id))})
 
 
