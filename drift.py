@@ -130,7 +130,7 @@ class LocalThreadPoolJobQueue:
         if final_job and final_job.get("status") in {"ready", "failed", "cancelled"}:
             self.repository.acknowledge_job(job_id, worker_id)
         else:
-            JOB_REPOSITORY.retry_job(
+            self.repository.retry_job(
                 job_id, worker_id, delay_seconds=30, max_attempts=self.MAX_ATTEMPTS
             )
 
@@ -185,7 +185,7 @@ class LocalThreadPoolJobQueue:
 
     def enqueue(self, job_id: str):
         """Validate and immediately submit a new job; later retries are found by polling."""
-        if JOB_REPOSITORY.get(job_id) is None:
+        if self.repository.get(job_id) is None:
             raise ValueError("Cannot enqueue an unknown job.")
         return self._submit(job_id)
 
