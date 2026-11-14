@@ -48,6 +48,7 @@ Job IDs must remain high entropy and be treated as bearer capabilities unless a 
 - Enable `DRIFT_TRUST_PROXY` only if the trusted proxy overwrites forwarded headers and direct backend access is blocked.
 - Use TLS, secret management, least-privilege service identities, and private object storage.
 - Apply hard CPU, memory, wall-clock, file-size, disk, egress, queue, and per-client limits at the hosting/infrastructure layer as well as in application code.
+- Run the backend container as its non-root user with a read-only root filesystem, all Linux capabilities dropped, `no-new-privileges`, and only explicitly bounded writable scratch/data mounts. These are defense-in-depth controls, not a substitute for outbound network filtering.
 - Provide a global pause/kill switch for new jobs and worker execution.
 - Define and test deletion/retention, backups, restore, incident response, and abuse reporting.
 - Do not require visitor accounts; use unguessable job capabilities and strict access checks for status and file access.
