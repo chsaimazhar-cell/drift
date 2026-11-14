@@ -63,7 +63,7 @@ Job IDs must remain high entropy and be treated as bearer capabilities unless a 
 - [x] Extract local filesystem operations behind a storage interface.
 - [x] Extract local enqueue behind a job-ID-only queue boundary; the API no longer passes process-local worker callables into the queue.
 - [x] Add focused tests for job-ID dispatch and rejection of unknown jobs.
-- [ ] Implement atomic claim, leases, acknowledgement, retry, and recovery before introducing a separate worker process.
+- [x] Add repository-level atomic claim, lease renewal, terminal acknowledgement, bounded retry scheduling, and expired-lease recovery primitives with SQLite contract tests. These primitives are not yet wired into a separate durable worker/queue and do not make SQLite multi-instance production-ready.
 - Preserve the current frontend and all public endpoints.
 - Do not add a second API server or worker until the interfaces and lifecycle tests are in place.
 
