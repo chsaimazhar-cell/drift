@@ -252,6 +252,31 @@ class PostgresJobRepository:
         finally:
             conn.close()
 
+    def claim_next_job(self, worker_id, lease_seconds=300, timestamp=None):
+        """Atomically claim the oldest due job without blocking other workers."""
+        if not worker_id or lease_seconds < 1:
+            raise ValueError("A worker ID and positive lease duration are required.")
+        row = self._execute(
+            "WITH candidate AS ("
+            " SELECT id FROM drift_jobs"
+            " WHERE status='queued' AND available_at<=COALESCE(to_timestamp(%s),NOW())"
+            " AND (lease_expires_at IS NULL OR lease_expires_at<=COALESCE(to_timestamp(%s),NOW()))"
+            " ORDER BY available_at, created_at"
+            " FOR UPDATE SKIP LOCKED LIMIT 1"
+            ") "
+            "UPDATE drift_jobs AS job SET status='downloading', phase='Claimed', lease_owner=%s, "
+            "lease_expires_at=COALESCE(to_timestamp(%s),NOW()) + (%s * INTERVAL '1 second'), "
+            "attempts=job.attempts+1, updated_at=COALESCE(to_timestamp(%s),NOW()) "
+            "FROM candidate WHERE job.id=candidate.id "
+            "RETURNING job.*, EXTRACT(EPOCH FROM job.created_at) AS created_at, "
+            "EXTRACT(EPOCH FROM job.updated_at) AS updated_at, "
+            "EXTRACT(EPOCH FROM job.available_at) AS available_at, "
+            "EXTRACT(EPOCH FROM job.lease_expires_at) AS lease_expires_at",
+            (timestamp, timestamp, worker_id, timestamp, lease_seconds, timestamp),
+            fetchone=True,
+        )
+        return self._job(row)
+
     def claim_job(self, job_id, worker_id, lease_seconds=300, timestamp=None):
         if not worker_id or lease_seconds < 1:
             raise ValueError("A worker ID and positive lease duration are required.")
