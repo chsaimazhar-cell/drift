@@ -537,5 +537,16 @@ class DriftHelperTests(unittest.TestCase):
             self.assertTrue(external.exists())
 
 
+    def test_local_job_queue_dispatches_work_and_shuts_down(self):
+        queue = drift.LocalThreadPoolJobQueue(max_workers=1)
+        completed = threading.Event()
+        try:
+            future = queue.enqueue(completed.set)
+            future.result(timeout=2)
+            self.assertTrue(completed.is_set())
+        finally:
+            queue.shutdown(wait=True, cancel_pending=True)
+
+
 if __name__ == "__main__":
     unittest.main()
