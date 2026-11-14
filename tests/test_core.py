@@ -61,6 +61,46 @@ class DriftHelperTests(unittest.TestCase):
         self.assertTrue(valid)
         self.assertEqual(parsed.hostname, "www.youtube.com")
 
+    def test_http_handler_applies_idle_socket_timeout(self):
+        class FakeConnection:
+            timeout = None
+            def settimeout(self, value):
+                self.timeout = value
+
+        handler = object.__new__(drift.Handler)
+        handler.connection = FakeConnection()
+        with patch.object(drift.BaseHTTPRequestHandler, "setup", lambda self: None), patch.object(
+            drift, "HTTP_SOCKET_TIMEOUT_SECONDS", 17
+        ):
+            handler.setup()
+        self.assertEqual(handler.connection.timeout, 17)
+
+    def test_startup_marks_interrupted_jobs_failed_and_removes_partial_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "downloads"
+            root.mkdir()
+            database = Path(temp) / "jobs.sqlite3"
+            partial = root / "drift-interrupted-job"
+            partial.mkdir()
+            (partial / "partial.mp4").write_bytes(b"partial")
+            with patch.object(drift, "DB_PATH", database), patch.object(
+                drift, "DOWNLOAD_ROOT", root
+            ):
+                drift.init_db()
+                job = {
+                    "id": "interrupted-job", "status": "downloading", "phase": "Downloading",
+                    "url": "https://www.youtube.com/watch?v=test", "quality": "best",
+                    "format": "MP4", "platform": "YouTube", "job_dir": str(partial),
+                    "created_at": drift.now(), "updated_at": drift.now(),
+                }
+                self.assertTrue(drift.insert_job_if_capacity(job))
+                recovered = drift.recover_interrupted_jobs()
+                self.assertEqual(recovered, 1)
+                self.assertFalse(partial.exists())
+                stored = drift.get_job("interrupted-job")
+                self.assertEqual(stored["status"], "failed")
+                self.assertIn("restarted", stored["message"])
+
     def test_media_probe_has_a_hard_timeout(self):
         timeout = subprocess.TimeoutExpired(cmd="ffmpeg", timeout=30)
         with patch.object(drift, "find_ffmpeg", return_value="ffmpeg"), patch.object(
