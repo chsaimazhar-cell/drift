@@ -135,6 +135,21 @@ Then check `http://localhost:5000/api/health`. The named Docker volume keeps the
 The container runs as a non-root user, installs FFmpeg, and includes an HTTP health check. Do not expose this single-instance container to unrestricted worldwide traffic yet. Before production, replace or externalize the local queue/database/file store, add shared abuse controls and outbound-network protections, and verify provider-level spending limits. A Vercel frontend can be connected later through a configured backend origin once a suitable backend host has been selected.
 
 
+
+## Conservative single-instance host template
+
+A Docker Compose template is provided for a **single backend instance** with conservative defaults: one active download, two queued jobs, a 300 MB per-file ceiling, a 2 GB application storage budget, a persistent named volume, container memory/CPU limits, and a loopback-only host binding. It deliberately does not expose the backend directly to the public internet.
+
+Before using it on a host:
+1. Install Docker Engine and the Docker Compose plugin.
+2. Create a private environment file containing `DRIFT_ALLOWED_ORIGIN=https://your-exact-vercel-domain.example`. Replace the example with the actual HTTPS origin; do not include a path or trailing slash.
+3. Keep `DRIFT_TRUST_PROXY=false` unless a trusted reverse proxy overwrites incoming `X-Forwarded-For` and direct access to the backend is blocked.
+4. Configure the reverse proxy to forward HTTPS traffic to `127.0.0.1:5000`, and apply request, connection, and bandwidth limits there.
+5. Run `docker compose up -d --build` and verify `/api/health`.
+6. Back up the named `drift-data` volume and monitor actual disk usage; the app quota is a guardrail, not a substitute for host disk limits and alerts.
+
+This template is not a host purchase or a production approval. The current Python service uses a single-process in-memory queue, per-process rate limits, and SQLite. Run only one backend replica. Do not scale horizontally or advertise unrestricted worldwide capacity until shared queue/database/storage, global abuse controls, outbound request protections, and load testing are implemented. Provider-level budgets and alerts must be configured in the hosting account; application code cannot enforce the provider's invoice ceiling.
+
 ## Vercel frontend configuration (backend required)
 
 Vercel is configured to build and publish only the static frontend from `public/`. The build runs `npm run build`, which generates `public/runtime-config.js` from the `DRIFT_API_BASE_URL` environment variable. Set this variable in the Vercel project to the HTTPS base URL of the separately hosted Drift backend (for example, `https://api.example.com`). The build intentionally fails if this value is missing or invalid, so a Vercel deployment cannot silently publish a frontend that points to a nonexistent same-origin API.
