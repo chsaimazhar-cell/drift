@@ -559,6 +559,51 @@ class DriftHelperTests(unittest.TestCase):
             storage.delete_workspace(workspace)
             self.assertFalse(workspace.exists())
 
+    def test_local_media_storage_prefers_complete_media_over_partial_fragments(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            storage = drift.LocalMediaStorage(root)
+            workspace = storage.create_workspace("find-media")
+            partial = workspace / "video.f137.mp4"
+            partial.write_bytes(b"x" * 100)
+            interrupted = workspace / "video.mp4.part"
+            interrupted.write_bytes(b"x" * 200)
+            complete = workspace / "video.mp4"
+            complete.write_bytes(b"x" * 10)
+            self.assertEqual(storage.find_media(workspace), complete)
+
+    def test_local_media_storage_falls_back_to_partial_media_when_no_complete_file_exists(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            storage = drift.LocalMediaStorage(root)
+            workspace = storage.create_workspace("find-media-fallback")
+            partial = workspace / "video.mp4.part"
+            partial.write_bytes(b"partial")
+            self.assertEqual(storage.find_media(workspace), partial)
+
+    def test_local_media_storage_cleanup_stale_removes_only_untracked_owned_directories(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            storage = drift.LocalMediaStorage(root)
+            stale = root / "drift-stale-job"
+            tracked = root / "drift-tracked-job"
+            unrelated = root / "other-stale-directory"
+            for directory in (stale, tracked, unrelated):
+                directory.mkdir()
+                (directory / "file.bin").write_bytes(b"data")
+            old_time = drift.now() - 3600
+            for directory in (stale, tracked, unrelated):
+                os.utime(directory, (old_time, old_time))
+            storage.cleanup_stale({tracked.name}, drift.now() - 60)
+            self.assertFalse(stale.exists())
+            self.assertTrue(tracked.exists())
+            self.assertTrue(unrelated.exists())
+
+    def test_local_media_storage_reports_available_disk_space(self):
+        with tempfile.TemporaryDirectory() as temp:
+            storage = drift.LocalMediaStorage(Path(temp))
+            self.assertGreaterEqual(storage.free_bytes(), 0)
+
     def test_local_media_storage_removes_only_owned_interrupted_workspace(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
