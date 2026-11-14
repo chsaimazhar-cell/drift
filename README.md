@@ -64,7 +64,7 @@ The application does not install or upgrade packages at startup. Install depende
 | `DRIFT_HTTP_SOCKET_TIMEOUT_SECONDS` | `30` | Idle HTTP connection timeout |
 | `DRIFT_DOWNLOAD_ROOT` | System temporary directory | Download and database directory |
 | `DRIFT_DB_PATH` | `<download root>/drift.sqlite3` | SQLite database path |
-| `DRIFT_ALLOWED_ORIGIN` | `*` | CORS origin for a separately hosted frontend |
+| `DRIFT_ALLOWED_ORIGIN` | unset (no cross-origin access) | Exact CORS origin for a separately hosted frontend; set explicitly |
 | `DRIFT_TRUST_PROXY` | `false` | Trust the first `X-Forwarded-For` IP only behind a proxy that sanitizes/overwrites that header |
 | `DRIFT_COOKIES_FILE` | `cookies.txt` beside the script if present | Optional yt-dlp cookie file |
 | `DRIFT_COOKIES_BROWSER` | unset | Optional browser cookie source supported by yt-dlp |
