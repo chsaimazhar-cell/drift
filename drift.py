@@ -68,6 +68,7 @@ KNOWN_HOSTS = {
 DB_LOCK = threading.RLock()
 CANCEL_EVENTS: dict[str, threading.Event] = {}
 DOWNLOAD_REPOSITORY_CONTEXT = contextvars.ContextVar("drift_download_repository", default=None)
+DOWNLOAD_MEDIA_STORE_CONTEXT = contextvars.ContextVar("drift_download_media_store", default=None)
 
 
 class LocalThreadPoolJobQueue:
@@ -1140,6 +1141,7 @@ def run_download(
     job_id: str, url: str, quality: str, *, lease_lost_event=None, repository=None
 ) -> None:
     repository_token = DOWNLOAD_REPOSITORY_CONTEXT.set(repository) if repository is not None else None
+    media_store = DOWNLOAD_MEDIA_STORE_CONTEXT.get() or PRIVATE_MEDIA_STORE
     job_dir = None
     uploaded_object_key = None
     try:
@@ -1182,7 +1184,7 @@ def run_download(
         final_path = job_dir / final_name
         check_worker_lease(lease_lost_event)
         MEDIA_STORAGE.finalize(media, final_path)
-        if PRIVATE_MEDIA_STORE is None:
+        if media_store is None:
             ready_updates = {
                 "phase": "Ready", "progress": 100, "title": title, "duration": duration,
                 "filename": final_name, "file_path": str(final_path), "file_size": size,
@@ -1195,7 +1197,7 @@ def run_download(
                 MEDIA_STORAGE.delete_workspace(job_dir)
         else:
             object_key = f"jobs/{job_id}/{uuid.uuid4().hex}.mp4"
-            stored = PRIVATE_MEDIA_STORE.put_file(final_path, object_key, "video/mp4", final_name)
+            stored = media_store.put_file(final_path, object_key, "video/mp4", final_name)
             # Track the upload before checking the lease so lease loss cannot orphan it.
             uploaded_object_key = stored.object_key
             check_worker_lease(lease_lost_event)
@@ -1240,9 +1242,9 @@ def run_download(
             shutil.rmtree(job_dir, ignore_errors=True)
         raise
     finally:
-        if uploaded_object_key and PRIVATE_MEDIA_STORE is not None:
+        if uploaded_object_key and media_store is not None:
             try:
-                PRIVATE_MEDIA_STORE.delete_object(uploaded_object_key)
+                media_store.delete_object(uploaded_object_key)
             except Exception:
                 pass  # Provider lifecycle cleanup is the fallback for an orphaned upload.
         CANCEL_EVENTS.pop(job_id, None)
