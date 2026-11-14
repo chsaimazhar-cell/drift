@@ -84,7 +84,7 @@ Job IDs must remain high entropy and be treated as bearer capabilities unless a 
 
 ## Provider research
 
-See `docs/backend-provider-evaluation.md` for the current provider comparison, preliminary architecture direction, free-tier limitations, security blockers, and approval gates. This is research only; no provider is selected or connected.
+See `docs/backend-provider-research.md` for the current provider comparison, preliminary architecture direction, free-tier limitations, security blockers, and approval gates. This is research only; no provider is selected or connected.
 
 ## Decisions intentionally left open
 
