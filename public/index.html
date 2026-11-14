@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="A fast, elegant public-media downloader. Paste a supported public video URL and prepare your download.">
+  <meta name="theme-color" content="#0a0a0b">
+  <title>Drift — Download without the detour</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="noise" aria-hidden="true"></div>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+
+  <header class="nav-shell">
+    <nav class="nav container">
+      <a class="brand" href="#" aria-label="Drift home">
+        <span class="brand-mark"><span></span></span>
+        <span>drift</span>
+      </a>
+
+      <div class="nav-links">
+        <a href="#how">How it works</a>
+        <a href="#features">Features</a>
+        <a href="#faq">FAQ</a>
+      </div>
+
+      <div class="nav-actions">
+        <button class="icon-btn" id="themeToggle" aria-label="Toggle theme" title="Toggle theme">◐</button>
+        <a class="nav-cta" href="#downloader">Try it <span>↗</span></a>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero container" id="downloader">
+      <div class="eyebrow reveal">
+        <span class="eyebrow-dot"></span>
+        Simple media tools, beautifully made
+      </div>
+
+      <h1 class="hero-title reveal reveal-delay-1">
+        Download the moment.<br>
+        <em>Keep the quality.</em>
+      </h1>
+
+      <p class="hero-copy reveal reveal-delay-2">
+        Paste a supported public video link. Drift handles the busywork
+        and gets you to a clean download without the clutter.
+      </p>
+
+      <div class="download-console reveal reveal-delay-3">
+        <div class="console-topline">
+          <span class="status-light" id="consoleStatusLight"></span>
+          <span id="consoleStatus">Ready when you are</span>
+          <span class="console-shortcut">⌘ V</span>
+        </div>
+
+        <div class="url-row">
+          <div class="url-field">
+            <span class="link-icon">↗</span>
+            <input id="urlInput" type="url" autocomplete="off"
+              placeholder="Paste a public video URL…"
+              aria-label="Video URL">
+            <button class="paste-btn" id="pasteBtn">Paste</button>
+          </div>
+          <button class="analyze-btn" id="analyzeBtn">
+            <span class="btn-label">Analyze</span>
+            <span class="btn-arrow">→</span>
+          </button>
+        </div>
+
+        <div class="console-foot">
+          <span id="consoleMessage">Public links only · No account required</span>
+          <span class="platform-hint">MP4 · HD · Fast</span>
+        </div>
+      </div>
+
+      <div class="platform-row reveal reveal-delay-4">
+        <span>Built for the platforms you already use</span>
+        <div class="platform-pills">
+          <span>Instagram</span>
+          <span>TikTok</span>
+          <span>YouTube</span>
+          <span>Facebook</span>
+          <span>X</span>
+        </div>
+      </div>
+
+      <div class="hero-stage reveal reveal-delay-5" aria-hidden="true">
+        <div class="stage-glow"></div>
+        <div class="product-window">
+          <div class="window-bar">
+            <span class="window-dots"><i></i><i></i><i></i></span>
+            <span>drift / download</span>
+            <span>•••</span>
+          </div>
+          <div class="window-content">
+            <div class="preview-skeleton">
+              <div class="preview-image">
+                <div class="hero-preview-badge">LIVE PREVIEW</div>
+                <div class="play-orb">▶</div>
+              </div>
+              <div class="preview-lines">
+                <span class="line wide"></span>
+                <span class="line medium"></span>
+                <span class="line short"></span>
+              </div>
+            </div>
+            <div class="format-panel">
+              <div>
+                <span class="panel-label">AVAILABLE FORMAT</span>
+                <strong>MP4 · 1080p</strong>
+              </div>
+              <button>Download <span>↓</span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="downloads-section container" id="downloads" hidden aria-live="polite">
+      <div class="downloads-heading reveal visible">
+        <div>
+          <span class="section-kicker">DOWNLOAD CENTER</span>
+          <h2>Your downloads.<br><span>Live, not silent.</span></h2>
+        </div>
+        <p id="downloadsSummary">Your active and recent downloads appear here.</p>
+      </div>
+      <div class="download-list" id="downloadList"></div>
+    </section>
+
+    <section class="proof-strip container reveal">
+      <div><strong>01</strong><span>Paste</span><p>Drop in a public link.</p></div>
+      <div><strong>02</strong><span>Analyze</span><p>We inspect the media.</p></div>
+      <div><strong>03</strong><span>Download</span><p>Choose your format.</p></div>
+    </section>
+
+    <section class="section container" id="features">
+      <div class="section-heading reveal">
+        <span class="section-kicker">THE DIFFERENCE</span>
+        <h2>Quietly powerful.<br><span>Loudly useful.</span></h2>
+        <p>Every part of Drift is designed to remove friction—not add another dashboard to your life.</p>
+      </div>
+
+      <div class="feature-grid">
+        <article class="feature-card large reveal">
+          <div class="feature-art art-speed">
+            <div class="speed-ring ring-a"></div>
+            <div class="speed-ring ring-b"></div>
+            <div class="speed-core">01</div>
+          </div>
+          <div class="feature-copy">
+            <span>01 / SPEED</span>
+            <h3>One input.<br>Zero wandering.</h3>
+            <p>No maze of buttons. Paste the link, see what is available, and choose what you need.</p>
+          </div>
+        </article>
+
+        <article class="feature-card reveal">
+          <div class="mini-art formats-art">
+            <span>1080p</span><span>720p</span><span>480p</span>
+          </div>
+          <span>02 / CONTROL</span>
+          <h3>Choose your quality.</h3>
+          <p>When multiple public formats are available, pick the one that fits your use case.</p>
+        </article>
+
+        <article class="feature-card reveal">
+          <div class="mini-art privacy-art">
+            <div class="lock">⌁</div>
+            <div class="privacy-orbit"></div>
+          </div>
+          <span>03 / PRIVACY</span>
+          <h3>No account required.</h3>
+          <p>Keep the experience lightweight. Your browser handles local preferences and history.</p>
+        </article>
+
+        <article class="feature-card wide reveal">
+          <div class="wide-copy">
+            <span>04 / BUILT TO FEEL FAST</span>
+            <h3>Motion with a purpose.</h3>
+            <p>Micro-interactions tell you what changed, where to look, and when you're ready. Nothing moves just because it can.</p>
+          </div>
+          <div class="motion-demo">
+            <div class="motion-line"></div>
+            <div class="motion-dot"></div>
+            <div class="motion-dot delay"></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="how-section" id="how">
+      <div class="container">
+        <div class="section-heading reveal">
+          <span class="section-kicker">HOW IT WORKS</span>
+          <h2>Three steps.<br><span>That's it.</span></h2>
+        </div>
+
+        <div class="steps">
+          <article class="step reveal">
+            <div class="step-number">01</div>
+            <div class="step-visual paste-visual"><span>Paste URL</span><i>↗</i></div>
+            <h3>Bring the link.</h3>
+            <p>Copy a public video URL and paste it into the downloader.</p>
+          </article>
+          <article class="step reveal">
+            <div class="step-number">02</div>
+            <div class="step-visual analyze-visual"><span>Analyzing</span><i class="loader"></i></div>
+            <h3>Let Drift inspect it.</h3>
+            <p>The backend validates the address and checks available public media information.</p>
+          </article>
+          <article class="step reveal">
+            <div class="step-number">03</div>
+            <div class="step-visual ready-visual"><span>Ready</span><i>↓</i></div>
+            <h3>Take it with you.</h3>
+            <p>Pick an available quality and start your download.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="faq-section container" id="faq">
+      <div class="faq-intro reveal">
+        <span class="section-kicker">FAQ</span>
+        <h2>Good questions<br>deserve clear answers.</h2>
+      </div>
+      <div class="faq-list">
+        <details class="faq-item reveal">
+          <summary>What kind of links can I use?<span>+</span></summary>
+          <p>Drift is designed for publicly accessible media from supported platforms. Private content, DRM, authentication bypasses and other access-control circumvention are not supported.</p>
+        </details>
+        <details class="faq-item reveal">
+          <summary>Do I need an account?<span>+</span></summary>
+          <p>No. The initial project keeps the core experience account-free. Local preferences and recent items can be stored in your browser.</p>
+        </details>
+        <details class="faq-item reveal">
+          <summary>Will every video have 1080p?<span>+</span></summary>
+          <p>No. Available quality depends on the public media source. The interface only presents formats that the backend can legitimately retrieve.</p>
+        </details>
+        <details class="faq-item reveal">
+          <summary>Can I add more platforms later?<span>+</span></summary>
+          <p>Yes. The Python backend is organized around platform adapters so new supported sources can be added without rewriting the frontend.</p>
+        </details>
+      </div>
+    </section>
+
+    <section class="final-cta container reveal">
+      <div class="final-glow"></div>
+      <span class="section-kicker">READY WHEN YOU ARE</span>
+      <h2>Less scrolling.<br><em>More keeping.</em></h2>
+      <a href="#downloader" class="final-button">Start downloading <span>→</span></a>
+    </section>
+  </main>
+
+  <footer class="footer container">
+    <div class="footer-brand">
+      <a class="brand" href="#"><span class="brand-mark"><span></span></span><span>drift</span></a>
+      <p>Simple tools for the internet you actually use.</p>
+    </div>
+    <div class="footer-meta">
+      <span>Built with HTML · CSS · JavaScript · Python</span>
+      <span>© 2026 Drift</span>
+    </div>
+  </footer>
+
+  <div class="toast" id="toast" role="status" aria-live="polite">
+    <span class="toast-icon">✓</span>
+    <span id="toastText">Copied</span>
+  </div>
+
+  <div class="result-modal" id="resultModal" aria-hidden="true">
+    <div class="modal-backdrop"></div>
+    <div class="modal-card">
+      <button class="modal-close" id="modalClose" aria-label="Close">×</button>
+      <div class="modal-kicker">MEDIA ANALYSIS</div>
+      <div class="result-layout">
+        <div class="result-thumb">
+          <div class="thumb-placeholder" id="thumbPlaceholder"><span>▶</span></div>
+          <img id="resultThumbnail" class="result-thumbnail" alt="Video thumbnail" hidden>
+          <span class="duration" id="resultDuration"></span>
+        </div>
+        <div class="result-info">
+          <span class="result-platform" id="resultPlatform">PUBLIC MEDIA</span>
+          <h3 id="resultTitle">Ready to download</h3>
+          <p id="resultMeta">Available media information is shown below.</p>
+          <div class="select-row">
+            <label>Quality<select id="qualitySelect"><option>1080p</option><option>720p</option><option>480p</option></select></label>
+            <label>Format<select id="formatSelect"><option value="MP4">MP4</option></select></label>
+          </div>
+          <button class="download-result" id="downloadBtn">Download <span>↓</span></button>
+          <small id="resultNote">Public media only · Drift only retrieves media the source makes publicly accessible.</small>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
