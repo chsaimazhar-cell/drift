@@ -15,7 +15,6 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
-from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -726,13 +725,16 @@ class DownloadTooLarge(Exception): pass
 MEDIA_SUFFIXES = {".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi", ".flv", ".3gp", ".ts"}
 
 
-@dataclass(frozen=True)
 class StoredMediaObject:
     """Provider-neutral reference to a private, completed media object."""
-    object_key: str
-    size_bytes: int
-    content_type: str
-    filename: str
+
+    __slots__ = ("object_key", "size_bytes", "content_type", "filename")
+
+    def __init__(self, object_key: str, size_bytes: int, content_type: str, filename: str):
+        self.object_key = object_key
+        self.size_bytes = size_bytes
+        self.content_type = content_type
+        self.filename = filename
 
 
 @runtime_checkable
