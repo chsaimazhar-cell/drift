@@ -701,6 +701,99 @@ class DriftHelperTests(unittest.TestCase):
             self.assertTrue(external.exists())
 
 
+    def test_repository_queue_claim_is_atomic_and_enforces_availability(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(drift, "DB_PATH", Path(temp) / "queue.sqlite3"):
+                drift.init_db()
+                job = {
+                    "id": "claim-once", "status": "queued", "phase": "Queued",
+                    "url": "https://youtube.com/watch?v=claim", "quality": "best",
+                    "format": "MP4", "platform": "YouTube",
+                    "created_at": 10, "updated_at": 10, "available_at": 50,
+                }
+                drift.JOB_REPOSITORY.insert(job)
+                self.assertIsNone(drift.JOB_REPOSITORY.claim_job("claim-once", "worker-a", timestamp=49))
+                claimed = drift.JOB_REPOSITORY.claim_job("claim-once", "worker-a", timestamp=50)
+                self.assertEqual(claimed["lease_owner"], "worker-a")
+                self.assertEqual(claimed["attempts"], 1)
+                self.assertIsNone(drift.JOB_REPOSITORY.claim_job("claim-once", "worker-b", timestamp=51))
+
+    def test_repository_queue_lease_renewal_and_acknowledgement(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(drift, "DB_PATH", Path(temp) / "lease.sqlite3"):
+                drift.init_db()
+                job = {
+                    "id": "lease-job", "status": "queued", "phase": "Queued",
+                    "url": "https://youtube.com/watch?v=lease", "quality": "best",
+                    "format": "MP4", "platform": "YouTube",
+                    "created_at": 10, "updated_at": 10,
+                }
+                drift.JOB_REPOSITORY.insert(job)
+                drift.JOB_REPOSITORY.claim_job("lease-job", "worker-a", lease_seconds=10, timestamp=20)
+                self.assertTrue(drift.JOB_REPOSITORY.renew_lease(
+                    "lease-job", "worker-a", lease_seconds=20, timestamp=25
+                ))
+                self.assertFalse(drift.JOB_REPOSITORY.renew_lease(
+                    "lease-job", "worker-b", timestamp=26
+                ))
+                self.assertFalse(drift.JOB_REPOSITORY.acknowledge_job("lease-job", "worker-a", timestamp=27))
+                drift.update_job("lease-job", status="ready")
+                self.assertTrue(drift.JOB_REPOSITORY.acknowledge_job("lease-job", "worker-a", timestamp=28))
+                stored = drift.get_job("lease-job")
+                self.assertIsNone(stored["lease_owner"])
+                self.assertIsNone(stored["lease_expires_at"])
+
+    def test_repository_queue_retry_and_expired_lease_recovery(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(drift, "DB_PATH", Path(temp) / "retry.sqlite3"):
+                drift.init_db()
+                base = {
+                    "status": "queued", "phase": "Queued",
+                    "url": "https://youtube.com/watch?v=retry", "quality": "best",
+                    "format": "MP4", "platform": "YouTube",
+                    "created_at": 1, "updated_at": 1,
+                }
+                drift.JOB_REPOSITORY.insert(dict(base, id="retry-manual"))
+                drift.JOB_REPOSITORY.claim_job("retry-manual", "worker-a", timestamp=10)
+                self.assertTrue(drift.JOB_REPOSITORY.retry_job(
+                    "retry-manual", "worker-a", delay_seconds=15, timestamp=11
+                ))
+                self.assertIsNone(drift.JOB_REPOSITORY.claim_job(
+                    "retry-manual", "worker-b", timestamp=25
+                ))
+                self.assertIsNotNone(drift.JOB_REPOSITORY.claim_job(
+                    "retry-manual", "worker-b", timestamp=26
+                ))
+
+                drift.JOB_REPOSITORY.insert(dict(base, id="lease-recover"))
+                drift.JOB_REPOSITORY.claim_job(
+                    "lease-recover", "worker-old", lease_seconds=5, timestamp=30
+                )
+                recovered = drift.JOB_REPOSITORY.recover_expired_leases(
+                    max_attempts=3, timestamp=36
+                )
+                self.assertEqual([row["id"] for row in recovered], ["lease-recover"])
+                recovered_job = drift.get_job("lease-recover")
+                self.assertEqual(recovered_job["status"], "queued")
+                self.assertIsNone(recovered_job["lease_owner"])
+
+    def test_repository_queue_marks_exhausted_expired_lease_failed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(drift, "DB_PATH", Path(temp) / "exhausted.sqlite3"):
+                drift.init_db()
+                job = {
+                    "id": "exhausted-job", "status": "queued", "phase": "Queued",
+                    "url": "https://youtube.com/watch?v=exhausted", "quality": "best",
+                    "format": "MP4", "platform": "YouTube",
+                    "created_at": 1, "updated_at": 1,
+                }
+                drift.JOB_REPOSITORY.insert(job)
+                drift.JOB_REPOSITORY.claim_job("exhausted-job", "worker-a", lease_seconds=5, timestamp=10)
+                self.assertEqual(
+                    len(drift.JOB_REPOSITORY.recover_expired_leases(max_attempts=1, timestamp=16)), 1
+                )
+                self.assertEqual(drift.get_job("exhausted-job")["status"], "failed")
+
     def test_local_job_queue_dispatches_job_id_and_shuts_down(self):
         queue = drift.LocalThreadPoolJobQueue(max_workers=1)
         completed = threading.Event()
