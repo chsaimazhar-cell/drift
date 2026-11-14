@@ -794,6 +794,42 @@ class DriftHelperTests(unittest.TestCase):
                 )
                 self.assertEqual(drift.get_job("exhausted-job")["status"], "failed")
 
+    def test_local_job_queue_claims_runs_and_acknowledges_terminal_job(self):
+        queue = drift.LocalThreadPoolJobQueue(max_workers=1)
+        job = {"id": "worker-lifecycle", "url": "https://youtube.com/watch?v=worker", "quality": "best"}
+        claimed = dict(job, status="downloading")
+        terminal = dict(job, status="ready")
+        with patch.object(drift, "JOB_REPOSITORY") as repository, patch.object(
+            drift, "run_download"
+        ) as worker:
+            repository.get.return_value = job
+            repository.claim_job.return_value = claimed
+            repository.get.side_effect = [job, terminal]
+            try:
+                future = queue.enqueue(job["id"])
+                future.result(timeout=3)
+                repository.claim_job.assert_called_once()
+                worker.assert_called_once_with(job["id"], job["url"], job["quality"])
+                repository.acknowledge_job.assert_called_once()
+                repository.retry_job.assert_not_called()
+            finally:
+                queue.shutdown(wait=True, cancel_pending=True)
+
+    def test_local_job_queue_does_not_run_job_when_claim_is_lost(self):
+        queue = drift.LocalThreadPoolJobQueue(max_workers=1)
+        job = {"id": "worker-claim-lost", "url": "https://youtube.com/watch?v=lost", "quality": "best"}
+        with patch.object(drift, "JOB_REPOSITORY") as repository, patch.object(
+            drift, "run_download"
+        ) as worker:
+            repository.get.return_value = job
+            repository.claim_job.return_value = None
+            try:
+                queue.enqueue(job["id"]).result(timeout=3)
+                worker.assert_not_called()
+                repository.acknowledge_job.assert_not_called()
+            finally:
+                queue.shutdown(wait=True, cancel_pending=True)
+
     def test_local_job_queue_dispatches_job_id_and_shuts_down(self):
         queue = drift.LocalThreadPoolJobQueue(max_workers=1)
         completed = threading.Event()
