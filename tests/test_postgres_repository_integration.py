@@ -159,12 +159,53 @@ class PostgresRepositoryIntegrationTests(unittest.TestCase):
         self.assertEqual(self.repo.active_count(), 4)
 
     def test_cancel_active_and_acknowledge_terminal_job(self):
-        job = self.make_job()
+        job = self.make_job(
+            status="downloading", lease_owner="worker-cancel",
+            lease_expires_at=1_800_000_300.0,
+        )
         self.repo.insert(job)
         self.assertEqual(self.repo.active_count(), 1)
         self.repo.cancel_active(job["id"])
-        self.assertEqual(self.repo.get(job["id"])["status"], "cancelled")
+        cancelled = self.repo.get(job["id"])
+        self.assertEqual(cancelled["status"], "cancelled")
+        self.assertIsNone(cancelled["lease_owner"])
+        self.assertIsNone(cancelled["lease_expires_at"])
         self.assertEqual(self.repo.active_count(), 0)
+
+    def test_expired_worker_leases_are_recovered_atomically(self):
+        retryable = self.make_job(
+            status="processing", attempts=1, lease_owner="dead-worker-a",
+            lease_expires_at=1_800_000_050.0,
+        )
+        exhausted = self.make_job(
+            status="downloading", attempts=3, lease_owner="dead-worker-b",
+            lease_expires_at=1_800_000_060.0,
+        )
+        self.repo.insert(retryable)
+        self.repo.insert(exhausted)
+
+        recovered = self.repo.recover_expired_leases(
+            max_attempts=3, timestamp=1_800_000_100.0
+        )
+        self.assertEqual({row["id"] for row in recovered}, {retryable["id"], exhausted["id"]})
+        retry_job = self.repo.get(retryable["id"])
+        self.assertEqual(retry_job["status"], "queued")
+        self.assertIsNone(retry_job["lease_owner"])
+        self.assertIsNone(retry_job["lease_expires_at"])
+        failed_job = self.repo.get(exhausted["id"])
+        self.assertEqual(failed_job["status"], "failed")
+        self.assertIsNone(failed_job["lease_owner"])
+        self.assertIsNone(failed_job["lease_expires_at"])
+
+    def test_mark_ready_only_transitions_active_jobs(self):
+        job = self.make_job()
+        self.repo.insert(job)
+        self.assertTrue(self.repo.mark_ready(job["id"], {"file_size": 42, "filename": "clip.mp4"}))
+        ready = self.repo.get(job["id"])
+        self.assertEqual(ready["status"], "ready")
+        self.assertEqual(ready["file_size"], 42)
+        self.assertFalse(self.repo.mark_ready(job["id"], {"file_size": 99}))
+        self.assertEqual(self.repo.get(job["id"])["file_size"], 42)
 
 
 if __name__ == "__main__":
