@@ -72,6 +72,26 @@ class DriftHelperTests(unittest.TestCase):
         self.assertNotIn(":", result)
         self.assertTrue(result.endswith(".mp4"))
 
+    def test_job_queue_capacity_is_enforced_atomically(self):
+        with tempfile.TemporaryDirectory() as temp:
+            test_db = Path(temp) / "queue.sqlite3"
+            with patch.object(drift, "DB_PATH", test_db), patch.object(drift, "MAX_TOTAL_JOBS", 1):
+                drift.init_db()
+                first = {
+                    "id": "queue-test-one", "status": "queued", "phase": "Queued",
+                    "url": "https://www.youtube.com/watch?v=one", "quality": "best",
+                    "format": "MP4", "platform": "YouTube",
+                    "created_at": drift.now(), "updated_at": drift.now(),
+                }
+                second = dict(first, id="queue-test-two")
+                self.assertTrue(drift.insert_job_if_capacity(first))
+                self.assertFalse(drift.insert_job_if_capacity(second))
+                with drift.db() as conn:
+                    count = conn.execute(
+                        "SELECT COUNT(*) FROM jobs WHERE status IN ('queued','downloading','processing')"
+                    ).fetchone()[0]
+                self.assertEqual(count, 1)
+
     def test_public_job_hides_internal_storage_paths(self):
         job = {
             "id": "job123456",
