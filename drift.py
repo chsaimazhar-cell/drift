@@ -312,7 +312,7 @@ def format_selector(quality: str) -> str:
 
 def clean_error(exc: Exception) -> str:
     # Provider exceptions can contain signed media URLs, cookies, or access tokens.
-    message = re.sub(r"https?://\\S+", "[redacted URL]", str(exc).replace("\n", " ").strip(), flags=re.IGNORECASE)
+    message = re.sub(r"https?://\S+", "[redacted URL]", str(exc).replace("\n", " ").strip(), flags=re.IGNORECASE)
     low = message.lower()
     if "certificate_verify_failed" in low or "unable to get local issuer" in low:
         return "TLS certificate verification failed. Update certifi and yt-dlp."
