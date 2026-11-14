@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import contextvars
 import ipaddress
 import json
 import mimetypes
@@ -66,6 +67,7 @@ KNOWN_HOSTS = {
 
 DB_LOCK = threading.RLock()
 CANCEL_EVENTS: dict[str, threading.Event] = {}
+DOWNLOAD_REPOSITORY_CONTEXT = contextvars.ContextVar("drift_download_repository", default=None)
 
 
 class LocalThreadPoolJobQueue:
@@ -681,12 +683,16 @@ class SQLiteJobRepository:
 JOB_REPOSITORY = SQLiteJobRepository()
 
 
+def _active_job_repository():
+    return DOWNLOAD_REPOSITORY_CONTEXT.get() or JOB_REPOSITORY
+
+
 def get_job(job_id: str) -> dict | None:
-    return JOB_REPOSITORY.get(job_id)
+    return _active_job_repository().get(job_id)
 
 
 def update_job(job_id: str, **updates) -> None:
-    JOB_REPOSITORY.update(job_id, updates)
+    _active_job_repository().update(job_id, updates)
 
 
 def mark_job_ready(job_id: str, **updates) -> bool:
@@ -694,7 +700,7 @@ def mark_job_ready(job_id: str, **updates) -> bool:
         event = CANCEL_EVENTS.get(job_id)
         if event and event.is_set():
             return False
-        return JOB_REPOSITORY.mark_ready(job_id, updates)
+        return _active_job_repository().mark_ready(job_id, updates)
 
 
 def insert_job(job: dict) -> None:
@@ -1130,7 +1136,10 @@ def ydl_common_options() -> dict:
     return opts
 
 
-def run_download(job_id: str, url: str, quality: str, *, lease_lost_event=None) -> None:
+def run_download(
+    job_id: str, url: str, quality: str, *, lease_lost_event=None, repository=None
+) -> None:
+    repository_token = DOWNLOAD_REPOSITORY_CONTEXT.set(repository) if repository is not None else None
     job_dir = None
     uploaded_object_key = None
     try:
@@ -1237,6 +1246,8 @@ def run_download(job_id: str, url: str, quality: str, *, lease_lost_event=None) 
             except Exception:
                 pass  # Provider lifecycle cleanup is the fallback for an orphaned upload.
         CANCEL_EVENTS.pop(job_id, None)
+        if repository_token is not None:
+            DOWNLOAD_REPOSITORY_CONTEXT.reset(repository_token)
 
 
 def recover_interrupted_jobs() -> int:
