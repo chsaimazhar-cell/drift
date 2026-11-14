@@ -58,7 +58,7 @@ Job IDs must remain high entropy and be treated as bearer capabilities unless a 
 - [x] Move SQLite schema initialization, interrupted-job recovery, expiry/deletion, active-job counting, cancellation, and the core job CRUD/capacity operations behind the local repository adapter.
 - [x] Add focused repository lifecycle tests.
 - [x] Add broader SQLite repository contract coverage for reads, updates, conditional ready transitions, and interrupted-job recovery.
-- [ ] Add migration tests before introducing a managed database.
+- [x] Add a versioned SQLite migration baseline using `PRAGMA user_version`, with transactional application, legacy-schema adoption, idempotency, rollback, and newer-version guard tests.
 - [x] Add local storage adapter contract tests for complete/partial media selection, stale-workspace cleanup, disk-space reporting, and workspace lifecycle.
 - [x] Extract local filesystem operations behind a storage interface.
 - [x] Extract local enqueue behind a job-ID-only queue boundary; the API no longer passes process-local worker callables into the queue.
