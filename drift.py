@@ -507,21 +507,41 @@ class SQLiteJobRepository:
             conn.commit()
             return True
 
-    def recover_interrupted(self) -> list[dict]:
+    def recover_interrupted(
+        self, max_attempts: int = 3, timestamp: float | None = None
+    ) -> list[dict]:
+        """Preserve queued work and safely requeue interrupted leased work on startup."""
+        if max_attempts < 1:
+            raise ValueError("Attempt limit must be positive.")
+        timestamp = now() if timestamp is None else timestamp
         with DB_LOCK, db() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             rows = conn.execute(
-                "SELECT id, job_dir FROM jobs WHERE status IN ('queued','downloading','processing')"
+                """SELECT id, job_dir, status, attempts FROM jobs
+                   WHERE status IN ('queued','downloading','processing')
+                   ORDER BY created_at"""
             ).fetchall()
-            if rows:
+            for row in rows:
+                if row["status"] == "queued":
+                    conn.execute(
+                        """UPDATE jobs SET lease_owner=NULL, lease_expires_at=NULL
+                           WHERE id=? AND status='queued'""",
+                        (row["id"],),
+                    )
+                    continue
+                retryable = row["attempts"] < max_attempts
                 conn.execute(
-                    """UPDATE jobs SET status='failed', phase='Failed',
-                       message='The download service restarted before this job finished. Please try again.',
-                       error='The service restarted during processing.',
-                       lease_owner=NULL, lease_expires_at=NULL, updated_at=?
-                       WHERE status IN ('queued','downloading','processing')""",
-                    (now(),),
+                    """UPDATE jobs SET status=?, phase=?, message=?, error=?,
+                       available_at=?, lease_owner=NULL, lease_expires_at=NULL, updated_at=?
+                       WHERE id=? AND status IN ('downloading','processing')""",
+                    ("queued" if retryable else "failed",
+                     "Queued" if retryable else "Failed",
+                     "The service restarted; retry scheduled." if retryable else "The service restarted after the retry limit.",
+                     None if retryable else "The service restarted after the retry limit.",
+                     timestamp, timestamp, row["id"]),
                 )
-            return [dict(row) for row in rows]
+            conn.commit()
+        return [dict(row) for row in rows]
 
     def expired_jobs(self, cutoff: float) -> dict:
         with DB_LOCK, db() as conn:
@@ -1188,11 +1208,17 @@ def run_download(job_id: str, url: str, quality: str) -> None:
 
 
 def recover_interrupted_jobs() -> int:
-    """Mark jobs left active by a process restart as failed and remove their partial files."""
-    rows = JOB_REPOSITORY.recover_interrupted()
+    """Preserve queued jobs and requeue interrupted work after removing partial output."""
+    rows = JOB_REPOSITORY.recover_interrupted(max_attempts=LocalThreadPoolJobQueue.MAX_ATTEMPTS)
+    recovered = 0
     for row in rows:
-        MEDIA_STORAGE.remove_interrupted(row.get("job_dir"))
-    return len(rows)
+        if row.get("status") in {"downloading", "processing"}:
+            MEDIA_STORAGE.remove_interrupted(row.get("job_dir"))
+            if row.get("attempts", 0) < LocalThreadPoolJobQueue.MAX_ATTEMPTS:
+                recovered += 1
+        elif row.get("status") == "queued":
+            recovered += 1
+    return recovered
 
 
 def cleanup_once() -> None:
@@ -1512,10 +1538,10 @@ class LimitedThreadingHTTPServer(ThreadingHTTPServer):
 
 def main():
     init_db()
-    JOB_QUEUE.start_dispatcher()
     recovered = recover_interrupted_jobs()
+    JOB_QUEUE.start_dispatcher()
     if recovered:
-        print(f"Marked {recovered} interrupted job(s) as failed after restart.", flush=True)
+        print(f"Recovered {recovered} queued or interrupted job(s) after restart.", flush=True)
     threading.Thread(target=cleanup_loop, daemon=True, name="drift-cleanup").start()
     server=LimitedThreadingHTTPServer((HOST,PORT),Handler)
     print(f"Drift backend listening on http://{HOST}:{PORT}")
