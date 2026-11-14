@@ -684,6 +684,11 @@ class DriftHelperTests(unittest.TestCase):
                     raise ValueError("A stored object and short expiry are required.")
                 return f"https://private-storage.invalid/signed/{object_key}?ttl={expires_in_seconds}"
 
+            def open_file_range(self, object_key, start, end):
+                if object_key not in self.objects:
+                    raise FileNotFoundError(object_key)
+                return io.BytesIO(self.objects[object_key]["payload"][start:end + 1])
+
             def delete_object(self, object_key):
                 self.objects.pop(object_key, None)
 
@@ -709,6 +714,8 @@ class DriftHelperTests(unittest.TestCase):
             signed_url = store.create_download_url(stored.object_key, 300)
             self.assertIn("ttl=300", signed_url)
             self.assertEqual(store.objects[stored.object_key]["payload"], b"completed-media")
+            with store.open_file_range(stored.object_key, 2, 6) as stream:
+                self.assertEqual(stream.read(), b"mplete")
             store.delete_object(stored.object_key)
             self.assertNotIn(stored.object_key, store.objects)
 
