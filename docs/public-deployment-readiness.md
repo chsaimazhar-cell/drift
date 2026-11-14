@@ -162,3 +162,11 @@ Research and repository preparation are approved. Provider account creation, ext
 - [ ] Select/connect providers and deploy only after separate explicit approval and an agreed spend ceiling.
 
 **Current launch decision remains: NOT READY.** The worker runtime is a repository component with passing unit tests; it is not yet a runnable production worker service, and the live application is not connected to PostgreSQL or cloud storage.
+
+
+### Worker lease-loss hardening update
+
+- [x] Worker runtime now exposes an in-process `_lease_lost_event` signal to its processor callback, marks lease loss when renewal returns false or raises, and refuses to acknowledge or reschedule a job after ownership is lost.
+- [x] Added a unit test proving a processor can observe lease loss and that the worker does not acknowledge/retry under stale ownership.
+- [ ] The current downloader does not yet consume this signal; its yt-dlp/FFmpeg work must be refactored to cooperate with cancellation and lease loss before production integration.
+- [ ] A processor that ignores the signal can continue external work after lease loss. Do not deploy this runtime as a production worker until the downloader is cooperative and duplicate side effects are controlled.
