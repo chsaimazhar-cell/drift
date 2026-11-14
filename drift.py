@@ -156,79 +156,110 @@ def public_job(job: dict | None) -> dict | None:
     return {key: value for key, value in job.items() if key in public_fields}
 
 
-def get_job(job_id: str) -> dict | None:
-    with DB_LOCK, db() as conn:
-        row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
-    return row_to_job(row) if row else None
+class SQLiteJobRepository:
+    """Local single-process job persistence adapter.
 
+    This adapter deliberately uses SQLite and local disk. It is not a
+    multi-instance production repository; replace it with a shared database
+    adapter before running multiple API or worker instances.
+    """
 
-def update_job(job_id: str, **updates) -> None:
-    if not updates:
-        return
-    updates["updated_at"] = now()
-    columns = ", ".join(f"{k}=?" for k in updates)
-    values = list(updates.values()) + [job_id]
-    with DB_LOCK, db() as conn:
-        conn.execute(f"UPDATE jobs SET {columns} WHERE id=?", values)
-        conn.commit()
+    def get(self, job_id: str) -> dict | None:
+        with DB_LOCK, db() as conn:
+            row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+        return row_to_job(row) if row else None
 
+    def update(self, job_id: str, updates: dict) -> None:
+        if not updates:
+            return
+        values_to_write = dict(updates)
+        values_to_write["updated_at"] = now()
+        columns = ", ".join(f"{key}=?" for key in values_to_write)
+        values = list(values_to_write.values()) + [job_id]
+        with DB_LOCK, db() as conn:
+            conn.execute(f"UPDATE jobs SET {columns} WHERE id=?", values)
+            conn.commit()
 
-def mark_job_ready(job_id: str, **updates) -> bool:
-    updates["status"] = "ready"
-    updates["updated_at"] = now()
-    columns = ", ".join(f"{column}=?" for column in updates)
-    values = list(updates.values()) + [job_id]
-    with DB_LOCK:
-        event = CANCEL_EVENTS.get(job_id)
-        if event and event.is_set():
-            return False
-        with db() as conn:
+    def mark_ready(self, job_id: str, updates: dict) -> bool:
+        values_to_write = dict(updates)
+        values_to_write["status"] = "ready"
+        values_to_write["updated_at"] = now()
+        columns = ", ".join(f"{column}=?" for column in values_to_write)
+        values = list(values_to_write.values()) + [job_id]
+        with DB_LOCK, db() as conn:
             cursor = conn.execute(
                 f"UPDATE jobs SET {columns} WHERE id=? AND status IN ('queued','downloading','processing')",
                 values,
             )
             conn.commit()
-    return cursor.rowcount == 1
+        return cursor.rowcount == 1
+
+    def insert(self, job: dict) -> None:
+        columns = list(job.keys())
+        placeholders = ",".join("?" for _ in columns)
+        with DB_LOCK, db() as conn:
+            conn.execute(
+                f"INSERT INTO jobs ({','.join(columns)}) VALUES ({placeholders})",
+                [job[column] for column in columns],
+            )
+            conn.commit()
+
+    def insert_if_capacity(self, job: dict) -> bool:
+        """Atomically enforce the local running/queued and disk budget."""
+        columns = list(job.keys())
+        placeholders = ",".join("?" for _ in columns)
+        with DB_LOCK, db() as conn:
+            total = conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE status IN ('queued','downloading','processing')"
+            ).fetchone()[0]
+            if total >= MAX_TOTAL_JOBS:
+                return False
+            ready_bytes = conn.execute(
+                "SELECT COALESCE(SUM(file_size), 0) FROM jobs WHERE status='ready'"
+            ).fetchone()[0]
+            reserved_bytes = total * MAX_DOWNLOAD_BYTES * 2
+            if ready_bytes + reserved_bytes + (MAX_DOWNLOAD_BYTES * 2) > MAX_STORAGE_BYTES:
+                return False
+            try:
+                if shutil.disk_usage(DOWNLOAD_ROOT).free < (MAX_DOWNLOAD_BYTES * 2):
+                    return False
+            except OSError:
+                return False
+            conn.execute(
+                f"INSERT INTO jobs ({','.join(columns)}) VALUES ({placeholders})",
+                [job[column] for column in columns],
+            )
+            conn.commit()
+            return True
+
+
+# The current adapter is intentionally local-only. A managed database adapter
+# can replace this object without changing the HTTP handlers or downloader.
+JOB_REPOSITORY = SQLiteJobRepository()
+
+
+def get_job(job_id: str) -> dict | None:
+    return JOB_REPOSITORY.get(job_id)
+
+
+def update_job(job_id: str, **updates) -> None:
+    JOB_REPOSITORY.update(job_id, updates)
+
+
+def mark_job_ready(job_id: str, **updates) -> bool:
+    with DB_LOCK:
+        event = CANCEL_EVENTS.get(job_id)
+        if event and event.is_set():
+            return False
+        return JOB_REPOSITORY.mark_ready(job_id, updates)
 
 
 def insert_job(job: dict) -> None:
-    columns = list(job.keys())
-    placeholders = ",".join("?" for _ in columns)
-    with DB_LOCK, db() as conn:
-        conn.execute(f"INSERT INTO jobs ({','.join(columns)}) VALUES ({placeholders})", [job[c] for c in columns])
-        conn.commit()
+    JOB_REPOSITORY.insert(job)
 
 
 def insert_job_if_capacity(job: dict) -> bool:
-    """Atomically enforce the per-process running-plus-queued job ceiling."""
-    columns = list(job.keys())
-    placeholders = ",".join("?" for _ in columns)
-    with DB_LOCK, db() as conn:
-        total = conn.execute(
-            "SELECT COUNT(*) FROM jobs WHERE status IN ('queued','downloading','processing')"
-        ).fetchone()[0]
-        if total >= MAX_TOTAL_JOBS:
-            return False
-        # Reserve the maximum permitted size for each queued/active job and
-        # account for completed files until their normal TTL cleanup.
-        ready_bytes = conn.execute(
-            "SELECT COALESCE(SUM(file_size), 0) FROM jobs WHERE status='ready'"
-        ).fetchone()[0]
-        reserved_bytes = total * MAX_DOWNLOAD_BYTES * 2
-        # Allow room for the source file and a temporary converted MP4 at once.
-        if ready_bytes + reserved_bytes + (MAX_DOWNLOAD_BYTES * 2) > MAX_STORAGE_BYTES:
-            return False
-        try:
-            if shutil.disk_usage(DOWNLOAD_ROOT).free < (MAX_DOWNLOAD_BYTES * 2):
-                return False
-        except OSError:
-            return False
-        conn.execute(
-            f"INSERT INTO jobs ({','.join(columns)}) VALUES ({placeholders})",
-            [job[column] for column in columns],
-        )
-        conn.commit()
-        return True
+    return JOB_REPOSITORY.insert_if_capacity(job)
 
 
 def validate_public_url(raw_url: str):
