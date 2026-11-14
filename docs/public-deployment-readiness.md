@@ -104,7 +104,9 @@ No production migration, provider provisioning, database creation, object-storag
 
 ### Remaining implementation work (deployment blockers)
 
-- [ ] Enforce outbound network policy at the host/container network layer, including redirects and DNS rebinding. Application-level URL validation is not sufficient.
+The detailed infrastructure egress requirements are in [outbound-network-security-policy.md](outbound-network-security-policy.md). The staged test and release procedure is in [private-beta-verification-runbook.md](private-beta-verification-runbook.md). These documents are plans and test criteria, not evidence that a provider has enforced the controls.
+
+- [ ] Enforce outbound network policy at the host/container network layer, including redirects and DNS rebinding. Application-level URL validation is not sufficient; follow the [outbound network security policy](outbound-network-security-policy.md).
 - [ ] Replace the in-process executor and cancellation map with a durable queue and independent worker lifecycle.
 - [ ] Replace local SQLite as the production shared job store with a managed persistent database and migrations.
 - [ ] Move completed media to private durable object storage with short-lived download authorization and automatic deletion.
@@ -114,7 +116,7 @@ No production migration, provider provisioning, database creation, object-storag
 - [ ] Add integration/load/failure tests for concurrent jobs, restarts, queue saturation, object expiry, abuse, and real provider redirects.
 - [ ] Choose and configure a backend host and its required network controls; no provider has been selected or provisioned.
 - [ ] Connect the static frontend to the verified backend origin and test the complete browser download flow.
-- [ ] Complete a private beta and operational monitoring before any public launch.
+- [ ] Complete a private beta and operational monitoring before any public launch; follow the [private-beta verification runbook](private-beta-verification-runbook.md).
 
 ### Explicitly deferred by the owner
 
@@ -137,3 +139,18 @@ A passing CI run verifies the tested code and build steps; it does **not** estab
 ## Backend architecture plan
 
 A provider-neutral target architecture and phased migration plan is documented in [backend-architecture.md](backend-architecture.md). It separates job persistence, durable queueing, media storage, and abuse controls, and records the security and operational requirements that must be satisfied before production deployment.
+
+
+## Latest CI verification (2026-11-14)
+
+The latest workflow for commit `7a664e294af516634f4ea0450deabdd576d17120` completed successfully:
+
+- Python unit tests: passed.
+- Vercel frontend build: passed.
+- Frontend JavaScript syntax check: passed.
+- Docker Compose configuration validation: passed.
+- Backend Docker image build: passed.
+
+Workflow: https://github.com/chsaimazhar-cell/drift/actions/runs/43628648618
+
+This proves the tested source builds and the Docker image can be created. It does not run a persistent backend, provision external services, verify production network egress, or establish production readiness.
