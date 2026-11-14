@@ -138,6 +138,45 @@ RATE_LOCK = threading.Lock()
 RATE_WINDOWS: dict[str, list[float]] = {}
 
 
+@runtime_checkable
+class AbuseControls(Protocol):
+    """Shared enforcement boundary for request limits and the emergency stop."""
+    def allow_request(self, key: str, limit: int, window_seconds: int, timestamp: float) -> bool: ...
+    def accepting_work(self) -> bool: ...
+
+
+class LocalAbuseControls:
+    """Single-process development adapter; not safe for multi-instance production."""
+    def allow_request(self, key: str, limit: int, window_seconds: int, timestamp: float) -> bool:
+        cutoff = timestamp - window_seconds
+        with RATE_LOCK:
+            if len(RATE_WINDOWS) > 10000:
+                stale_before = timestamp - 3600
+                for old_key in list(RATE_WINDOWS):
+                    recent = [stamp for stamp in RATE_WINDOWS[old_key] if stamp > stale_before]
+                    if recent:
+                        RATE_WINDOWS[old_key] = recent
+                    else:
+                        RATE_WINDOWS.pop(old_key, None)
+                if len(RATE_WINDOWS) > 10000:
+                    for old_key in list(RATE_WINDOWS)[:len(RATE_WINDOWS) - 10000]:
+                        RATE_WINDOWS.pop(old_key, None)
+            timestamps = [stamp for stamp in RATE_WINDOWS.get(key, []) if stamp > cutoff]
+            if len(timestamps) >= limit:
+                RATE_WINDOWS[key] = timestamps
+                return False
+            timestamps.append(timestamp)
+            RATE_WINDOWS[key] = timestamps
+            return True
+
+    def accepting_work(self) -> bool:
+        value = os.getenv("DRIFT_ACCEPTING_WORK", "true").strip().lower()
+        return value not in {"0", "false", "no", "off", "disabled"}
+
+
+ABUSE_CONTROLS: AbuseControls = LocalAbuseControls()
+
+
 # ======================================================================
 # EMBEDDED FRONTEND (HTML + CSS + JS) - everything lives in this one file
 # ======================================================================
@@ -675,34 +714,12 @@ def client_key(handler: BaseHTTPRequestHandler) -> str:
 
 
 def accepting_new_work() -> bool:
-    """Local emergency switch; shared production enforcement belongs in AbuseControls."""
-    value = os.getenv("DRIFT_ACCEPTING_WORK", "true").strip().lower()
-    return value not in {"0", "false", "no", "off", "disabled"}
+    return ABUSE_CONTROLS.accepting_work()
 
 
 def rate_limit(handler: BaseHTTPRequestHandler, bucket: str, limit: int, window_seconds: int) -> bool:
     key = f"{bucket}:{client_key(handler)}"
-    cutoff = now() - window_seconds
-    with RATE_LOCK:
-        # Bound memory use if many one-off client addresses hit the service.
-        if len(RATE_WINDOWS) > 10000:
-            stale_before = now() - 3600
-            for old_key in list(RATE_WINDOWS):
-                recent = [stamp for stamp in RATE_WINDOWS[old_key] if stamp > stale_before]
-                if recent:
-                    RATE_WINDOWS[old_key] = recent
-                else:
-                    RATE_WINDOWS.pop(old_key, None)
-            if len(RATE_WINDOWS) > 10000:
-                for old_key in list(RATE_WINDOWS)[:len(RATE_WINDOWS) - 10000]:
-                    RATE_WINDOWS.pop(old_key, None)
-        timestamps = [t for t in RATE_WINDOWS.get(key, []) if t > cutoff]
-        if len(timestamps) >= limit:
-            RATE_WINDOWS[key] = timestamps
-            return False
-        timestamps.append(now())
-        RATE_WINDOWS[key] = timestamps
-        return True
+    return ABUSE_CONTROLS.allow_request(key, limit, window_seconds, now())
 
 
 def safe_filename(name: str) -> str:
