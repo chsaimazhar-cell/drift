@@ -974,6 +974,7 @@ def ydl_common_options() -> dict:
 
 def run_download(job_id: str, url: str, quality: str) -> None:
     job_dir = None
+    uploaded_object_key = None
     try:
         early = CANCEL_EVENTS.get(job_id)
         if early and early.is_set():
@@ -1022,8 +1023,8 @@ def run_download(job_id: str, url: str, quality: str) -> None:
         else:
             object_key = f"jobs/{job_id}/{uuid.uuid4().hex}.mp4"
             stored = PRIVATE_MEDIA_STORE.put_file(final_path, object_key, "video/mp4", final_name)
+            uploaded_object_key = stored.object_key
             if stored.object_key != object_key or stored.size_bytes != size or stored.content_type != "video/mp4":
-                PRIVATE_MEDIA_STORE.delete_object(object_key)
                 raise RuntimeError("Private storage returned inconsistent media metadata.")
             expires_at = now() + JOB_TTL_SECONDS
             ready_updates = {
@@ -1034,8 +1035,8 @@ def run_download(job_id: str, url: str, quality: str) -> None:
                 "object_expires_at": expires_at,
                 "message": "Your MP4 is ready to save.", "completed_at": now(),
             }
-            if not mark_job_ready(job_id, **ready_updates):
-                PRIVATE_MEDIA_STORE.delete_object(stored.object_key)
+            if mark_job_ready(job_id, **ready_updates):
+                uploaded_object_key = None  # The repository now owns this object reference.
             MEDIA_STORAGE.delete_workspace(job_dir)
     except DownloadCancelled:
         update_job(job_id, status="cancelled", phase="Cancelled", message="Download cancelled.")
@@ -1057,6 +1058,11 @@ def run_download(job_id: str, url: str, quality: str) -> None:
         if job_dir is not None:
             shutil.rmtree(job_dir, ignore_errors=True)
     finally:
+        if uploaded_object_key and PRIVATE_MEDIA_STORE is not None:
+            try:
+                PRIVATE_MEDIA_STORE.delete_object(uploaded_object_key)
+            except Exception:
+                pass  # Provider lifecycle cleanup is the fallback for an orphaned upload.
         CANCEL_EVENTS.pop(job_id, None)
 
 
