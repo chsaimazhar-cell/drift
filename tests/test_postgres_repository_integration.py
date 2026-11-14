@@ -92,6 +92,32 @@ class PostgresRepositoryIntegrationTests(unittest.TestCase):
         ))
         self.assertEqual(self.repo.get(job["id"])["status"], "queued")
 
+    def test_updates_and_ready_transition_are_fenced_by_lease_owner(self):
+        job = self.make_job()
+        self.repo.insert(job)
+        claimed = self.repo.claim_job(job["id"], "worker-owner", lease_seconds=60,
+                                      timestamp=job["available_at"] + 1)
+        self.assertEqual(claimed["lease_owner"], "worker-owner")
+
+        self.assertFalse(self.repo.update_owned(
+            job["id"], "different-worker", {"progress": 25}
+        ))
+        self.assertTrue(self.repo.update_owned(
+            job["id"], "worker-owner", {"progress": 50, "phase": "Downloading"}
+        ))
+        self.assertEqual(self.repo.get(job["id"])["progress"], 50)
+
+        self.assertFalse(self.repo.mark_ready_owned(
+            job["id"], "different-worker", {"filename": "wrong.mp4"}
+        ))
+        self.assertTrue(self.repo.mark_ready_owned(
+            job["id"], "worker-owner", {"filename": "complete.mp4", "file_size": 42}
+        ))
+        ready = self.repo.get(job["id"])
+        self.assertEqual(ready["status"], "ready")
+        self.assertEqual(ready["filename"], "complete.mp4")
+        self.assertIsNone(ready["lease_owner"])
+
     def test_startup_recovery_and_terminal_expiry(self):
         queued = self.make_job(
             lease_owner="stale-worker",
