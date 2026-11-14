@@ -98,45 +98,8 @@ def db() -> Generator[sqlite3.Connection, None, None]:
 
 
 def init_db() -> None:
-    with DB_LOCK, db() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS jobs (
-                id TEXT PRIMARY KEY,
-                status TEXT NOT NULL,
-                phase TEXT NOT NULL,
-                progress REAL,
-                downloaded_bytes INTEGER NOT NULL DEFAULT 0,
-                total_bytes INTEGER NOT NULL DEFAULT 0,
-                speed REAL,
-                eta REAL,
-                url TEXT NOT NULL,
-                quality TEXT NOT NULL,
-                format TEXT NOT NULL,
-                platform TEXT NOT NULL,
-                title TEXT,
-                thumbnail TEXT,
-                filename TEXT,
-                file_size INTEGER NOT NULL DEFAULT 0,
-                message TEXT,
-                error TEXT,
-                created_at REAL NOT NULL,
-                updated_at REAL NOT NULL,
-                completed_at REAL,
-                job_dir TEXT,
-                file_path TEXT,
-                duration TEXT
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_updated ON jobs(updated_at)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)")
-        # Jobs cannot safely remain mid-network operation after a hard process restart.
-        conn.execute("""
-            UPDATE jobs
-            SET status='failed', phase='Failed', error='Backend restarted while this download was running.',
-                message='The backend restarted before this download completed.', updated_at=?
-            WHERE status IN ('queued','downloading','processing')
-        """, (now(),))
-        conn.commit()
+    """Initialize the configured local repository schema."""
+    JOB_REPOSITORY.initialize()
 
 
 def row_to_job(row: sqlite3.Row) -> dict:
@@ -163,6 +126,46 @@ class SQLiteJobRepository:
     multi-instance production repository; replace it with a shared database
     adapter before running multiple API or worker instances.
     """
+
+    def initialize(self) -> None:
+        with DB_LOCK, db() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS jobs (
+                    id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    phase TEXT NOT NULL,
+                    progress REAL,
+                    downloaded_bytes INTEGER NOT NULL DEFAULT 0,
+                    total_bytes INTEGER NOT NULL DEFAULT 0,
+                    speed REAL,
+                    eta REAL,
+                    url TEXT NOT NULL,
+                    quality TEXT NOT NULL,
+                    format TEXT NOT NULL,
+                    platform TEXT NOT NULL,
+                    title TEXT,
+                    thumbnail TEXT,
+                    filename TEXT,
+                    file_size INTEGER NOT NULL DEFAULT 0,
+                    message TEXT,
+                    error TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    completed_at REAL,
+                    job_dir TEXT,
+                    file_path TEXT,
+                    duration TEXT
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_updated ON jobs(updated_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)")
+            conn.execute("""
+                UPDATE jobs
+                SET status='failed', phase='Failed', error='Backend restarted while this download was running.',
+                    message='The backend restarted before this download completed.', updated_at=?
+                WHERE status IN ('queued','downloading','processing')
+            """, (now(),))
+            conn.commit()
 
     def get(self, job_id: str) -> dict | None:
         with DB_LOCK, db() as conn:
