@@ -46,6 +46,8 @@ JOB_TTL_SECONDS = int(os.getenv("DRIFT_JOB_TTL_SECONDS", str(30 * 60)))
 MAX_ACTIVE_JOBS = max(1, int(os.getenv("DRIFT_MAX_ACTIVE_JOBS", "2")))
 MAX_QUEUED_JOBS = max(0, int(os.getenv("DRIFT_MAX_QUEUED_JOBS", "4")))
 MAX_TOTAL_JOBS = MAX_ACTIVE_JOBS + MAX_QUEUED_JOBS
+MAX_HTTP_CONNECTIONS = max(4, int(os.getenv("DRIFT_MAX_HTTP_CONNECTIONS", "32")))
+FFMPEG_PROBE_TIMEOUT_SECONDS = max(5, int(os.getenv("DRIFT_FFMPEG_PROBE_TIMEOUT_SECONDS", "30")))
 DOWNLOAD_ROOT = Path(os.getenv("DRIFT_DOWNLOAD_ROOT", str(Path(tempfile.gettempdir()) / "drift-downloads")))
 DOWNLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 DB_PATH = Path(os.getenv("DRIFT_DB_PATH", str(DOWNLOAD_ROOT / "drift.sqlite3")))
@@ -436,8 +438,17 @@ def probe_media(media: Path) -> dict:
     ffmpeg = find_ffmpeg()
     if not ffmpeg:
         raise RuntimeError("FFmpeg is not available. Install FFmpeg or the imageio-ffmpeg package, then restart Drift.")
-    out = subprocess.run([ffmpeg, "-hide_banner", "-i", str(media)], capture_output=True, text=True,
-                         encoding="utf-8", errors="replace").stderr
+    try:
+        out = subprocess.run(
+            [ffmpeg, "-hide_banner", "-i", str(media)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=FFMPEG_PROBE_TIMEOUT_SECONDS,
+        ).stderr
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("Media inspection took too long. Please try another video.") from exc
     info = {"container": "", "video": [], "audio": []}
     m = re.search(r"Input #0, ([^,]+(?:,[^,]+)*?), from", out)
     if m:
@@ -879,10 +890,34 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json({"success":True,"job":public_job(get_job(job_id))})
 
 
+class LimitedThreadingHTTPServer(ThreadingHTTPServer):
+    """Bound concurrent HTTP handlers so connection floods cannot spawn unlimited threads."""
+
+    def __init__(self, server_address, RequestHandlerClass):
+        self.connection_slots = threading.BoundedSemaphore(MAX_HTTP_CONNECTIONS)
+        super().__init__(server_address, RequestHandlerClass)
+
+    def process_request(self, request, client_address):
+        if not self.connection_slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self.connection_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.connection_slots.release()
+
+
 def main():
     init_db()
     threading.Thread(target=cleanup_loop, daemon=True, name="drift-cleanup").start()
-    server=ThreadingHTTPServer((HOST,PORT),Handler)
+    server=LimitedThreadingHTTPServer((HOST,PORT),Handler)
     print(f"Drift backend listening on http://{HOST}:{PORT}")
     print(f"FFmpeg: {find_ffmpeg() or 'NOT FOUND'} | yt-dlp: {'ok' if yt_dlp else 'MISSING'}", flush=True)
     try: server.serve_forever()
