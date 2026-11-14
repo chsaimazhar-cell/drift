@@ -99,6 +99,7 @@ No production migration, provider provisioning, database creation, object-storag
 - [x] Redact media URL query strings from downloader errors and job IDs/query strings from HTTP access logs.
 - [x] Default CORS to closed; a separately hosted frontend must configure the exact allowed origin explicitly.
 - [x] Add a local emergency pause switch (`DRIFT_ACCEPTING_WORK=false`) for new analysis/download submissions and expose its state in the health response. This is single-process configuration only; it does not satisfy the shared production kill-switch requirement.
+- [x] Define and test a replaceable `AbuseControls` protocol for request-window limits and pause-state checks, with a local in-memory adapter. A shared, atomic, multi-instance implementation remains a production blocker.
 
 ### Remaining implementation work (deployment blockers)
 
