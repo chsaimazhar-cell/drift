@@ -138,7 +138,7 @@ class DriftHelperTests(unittest.TestCase):
                 drift.JOB_REPOSITORY.cancel_active("repo-active")
                 self.assertEqual(drift.get_job("repo-active")["status"], "cancelled")
                 drift.update_job("repo-active", status="failed", updated_at=1)
-                expired = drift.JOB_REPOSITORY.expired_jobs(drift.now() + 10)
+                expired = drift.JOB_REPOSITORY.expired_jobs(10**20)
                 self.assertEqual([job["id"] for job in expired["expired"]], ["repo-active"])
                 self.assertIsNone(drift.get_job("repo-active"))
                 self.assertEqual(expired["tracked"], [])
