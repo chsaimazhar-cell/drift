@@ -625,6 +625,58 @@ class DriftHelperTests(unittest.TestCase):
                 worker.join(timeout=5)
 
 
+    def test_private_media_object_store_contract_with_fake_adapter(self):
+        class FakePrivateObjectStore:
+            def __init__(self):
+                self.objects = {}
+
+            def put_file(self, source, object_key, content_type, filename):
+                payload = source.read_bytes()
+                self.objects[object_key] = {
+                    "payload": payload,
+                    "content_type": content_type,
+                    "filename": filename,
+                }
+                return drift.StoredMediaObject(
+                    object_key=object_key,
+                    size_bytes=len(payload),
+                    content_type=content_type,
+                    filename=filename,
+                )
+
+            def create_download_url(self, object_key, expires_in_seconds):
+                if object_key not in self.objects or not 1 <= expires_in_seconds <= 900:
+                    raise ValueError("A stored object and short expiry are required.")
+                return f"https://private-storage.invalid/signed/{object_key}?ttl={expires_in_seconds}"
+
+            def delete_object(self, object_key):
+                self.objects.pop(object_key, None)
+
+            def delete_expired_objects(self, cutoff_timestamp):
+                expired = [
+                    key for key, value in self.objects.items()
+                    if value.get("expires_at", float("inf")) <= cutoff_timestamp
+                ]
+                for key in expired:
+                    del self.objects[key]
+                return len(expired)
+
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "finished.mp4"
+            source.write_bytes(b"completed-media")
+            store = FakePrivateObjectStore()
+            self.assertIsInstance(store, drift.PrivateMediaObjectStore)
+            stored = store.put_file(
+                source, "jobs/job-capability/media.mp4", "video/mp4", "finished.mp4"
+            )
+            self.assertEqual(stored.size_bytes, len(b"completed-media"))
+            self.assertEqual(stored.content_type, "video/mp4")
+            signed_url = store.create_download_url(stored.object_key, 300)
+            self.assertIn("ttl=300", signed_url)
+            self.assertEqual(store.objects[stored.object_key]["payload"], b"completed-media")
+            store.delete_object(stored.object_key)
+            self.assertNotIn(stored.object_key, store.objects)
+
     def test_local_media_storage_workspace_lifecycle(self):
         with tempfile.TemporaryDirectory() as temp:
             storage = drift.LocalMediaStorage(Path(temp))
