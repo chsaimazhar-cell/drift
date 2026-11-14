@@ -174,6 +174,30 @@ class LocalAbuseControls:
         return value not in {"0", "false", "no", "off", "disabled"}
 
 
+
+@runtime_checkable
+class AtomicAbuseStateStore(Protocol):
+    """Backend contract: each rate-limit consume must be atomic and TTL-bounded."""
+
+    def consume_request(
+        self, key: str, limit: int, window_seconds: int, timestamp: float
+    ) -> bool: ...
+    def accepting_work(self) -> bool: ...
+
+
+class SharedAbuseControls:
+    """Adapter for a shared atomic store; the store implementation is supplied separately."""
+
+    def __init__(self, store: AtomicAbuseStateStore):
+        self.store = store
+
+    def allow_request(self, key: str, limit: int, window_seconds: int, timestamp: float) -> bool:
+        return self.store.consume_request(key, limit, window_seconds, timestamp)
+
+    def accepting_work(self) -> bool:
+        return self.store.accepting_work()
+
+
 ABUSE_CONTROLS: AbuseControls = LocalAbuseControls()
 
 
