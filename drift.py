@@ -71,15 +71,62 @@ CANCEL_EVENTS: dict[str, threading.Event] = {}
 class LocalThreadPoolJobQueue:
     """Development-only queue adapter; jobs are lost if this process stops."""
 
+    LEASE_SECONDS = 300
+    MAX_ATTEMPTS = 3
+
     def __init__(self, max_workers: int):
         self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="drift-download")
 
+    def _execute_claimed(self, job_id: str, worker_id: str) -> None:
+        job = JOB_REPOSITORY.claim_job(job_id, worker_id, lease_seconds=self.LEASE_SECONDS)
+        if job is None:
+            return
+
+        stop_heartbeat = threading.Event()
+
+        def renew_lease_loop():
+            interval = max(1, self.LEASE_SECONDS // 3)
+            while not stop_heartbeat.wait(interval):
+                try:
+                    if not JOB_REPOSITORY.renew_lease(
+                        job_id, worker_id, lease_seconds=self.LEASE_SECONDS
+                    ):
+                        return
+                except Exception:
+                    # A transient database issue must not spawn a second worker;
+                    # the lease will expire and recovery can reconcile the job.
+                    return
+
+        heartbeat = threading.Thread(
+            target=renew_lease_loop, daemon=True, name=f"drift-lease-{job_id[:8]}"
+        )
+        heartbeat.start()
+        try:
+            run_download(job_id, job["url"], job["quality"])
+        except Exception:
+            JOB_REPOSITORY.retry_job(
+                job_id, worker_id, delay_seconds=30, max_attempts=self.MAX_ATTEMPTS
+            )
+            raise
+        finally:
+            stop_heartbeat.set()
+            heartbeat.join(timeout=2)
+
+        final_job = JOB_REPOSITORY.get(job_id)
+        if final_job and final_job.get("status") in {"ready", "failed", "cancelled"}:
+            JOB_REPOSITORY.acknowledge_job(job_id, worker_id)
+        else:
+            JOB_REPOSITORY.retry_job(
+                job_id, worker_id, delay_seconds=30, max_attempts=self.MAX_ATTEMPTS
+            )
+
     def enqueue(self, job_id: str):
-        """Queue only a durable job identifier, not a process-local callable."""
+        """Schedule a job ID; the worker must atomically claim it before execution."""
         job = JOB_REPOSITORY.get(job_id)
         if job is None:
             raise ValueError("Cannot enqueue an unknown job.")
-        return self.executor.submit(run_download, job_id, job["url"], job["quality"])
+        worker_id = uuid.uuid4().hex
+        return self.executor.submit(self._execute_claimed, job_id, worker_id)
 
     def shutdown(self, wait: bool = False, cancel_pending: bool = True) -> None:
         self.executor.shutdown(wait=wait, cancel_futures=cancel_pending)
@@ -313,7 +360,8 @@ class SQLiteJobRepository:
                 conn.execute(
                     """UPDATE jobs SET status='failed', phase='Failed',
                        message='The download service restarted before this job finished. Please try again.',
-                       error='The service restarted during processing.', updated_at=?
+                       error='The service restarted during processing.',
+                       lease_owner=NULL, lease_expires_at=NULL, updated_at=?
                        WHERE status IN ('queued','downloading','processing')""",
                     (now(),),
                 )
