@@ -193,12 +193,20 @@ class PostgresRepositoryIntegrationTests(unittest.TestCase):
         )
         self.repo.insert(job)
         self.assertEqual(self.repo.active_count(), 1)
-        self.repo.cancel_active(job["id"])
+        self.assertTrue(self.repo.cancel_active(job["id"]))
         cancelled = self.repo.get(job["id"])
         self.assertEqual(cancelled["status"], "cancelled")
         self.assertIsNone(cancelled["lease_owner"])
         self.assertIsNone(cancelled["lease_expires_at"])
         self.assertEqual(self.repo.active_count(), 0)
+
+    def test_cancel_active_is_idempotent_and_preserves_terminal_jobs(self):
+        job = self.make_job(status="ready")
+        self.repo.insert(job)
+        self.assertFalse(self.repo.cancel_active(job["id"]))
+        unchanged = self.repo.get(job["id"])
+        self.assertEqual(unchanged["status"], "ready")
+        self.assertFalse(self.repo.cancel_active("missing-job-id"))
 
     def test_expired_worker_leases_are_recovered_atomically(self):
         retryable = self.make_job(
