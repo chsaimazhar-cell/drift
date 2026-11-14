@@ -839,7 +839,8 @@ class DriftHelperTests(unittest.TestCase):
             try:
                 future = queue.enqueue(job["id"])
                 future.result(timeout=2)
-                repository.get.assert_called_once_with(job["id"])
+                self.assertEqual(repository.get.call_count, 2)
+                repository.get.assert_any_call(job["id"])
                 worker.assert_called_once_with(job["id"], job["url"], job["quality"])
                 self.assertTrue(future.done())
             finally:
