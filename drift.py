@@ -66,7 +66,23 @@ KNOWN_HOSTS = {
 
 DB_LOCK = threading.RLock()
 CANCEL_EVENTS: dict[str, threading.Event] = {}
-EXECUTOR = ThreadPoolExecutor(max_workers=MAX_ACTIVE_JOBS, thread_name_prefix="drift-download")
+
+
+class LocalThreadPoolJobQueue:
+    """Development-only queue adapter; jobs are lost if this process stops."""
+
+    def __init__(self, max_workers: int):
+        self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="drift-download")
+
+    def enqueue(self, worker, *args):
+        return self.executor.submit(worker, *args)
+
+    def shutdown(self, wait: bool = False, cancel_pending: bool = True) -> None:
+        self.executor.shutdown(wait=wait, cancel_futures=cancel_pending)
+
+
+# Replace with a durable queue adapter before running multiple API/worker instances.
+JOB_QUEUE = LocalThreadPoolJobQueue(MAX_ACTIVE_JOBS)
 RATE_LOCK = threading.Lock()
 RATE_WINDOWS: dict[str, list[float]] = {}
 
@@ -731,7 +747,7 @@ def run_download(job_id: str, url: str, quality: str) -> None:
     except DownloadCancelled:
         update_job(job_id, status="cancelled", phase="Cancelled", message="Download cancelled.")
         if job_dir is not None:
-            shutil.rmtree(job_dir, ignore_errors=True)
+            MEDIA_STORAGE.delete_workspace(job_dir)
     except DownloadTooLarge as exc:
         update_job(job_id, status="failed", phase="Failed", error=str(exc), message=str(exc))
         if job_dir is not None:
@@ -1001,7 +1017,7 @@ class Handler(BaseHTTPRequestHandler):
             CANCEL_EVENTS.pop(job_id, None)
             return self.send_json({"success":False,"message":"Drift is at its current capacity. Please wait for a download to finish or for temporary files to expire."},429)
         try:
-            EXECUTOR.submit(run_download,job_id,url,quality)
+            JOB_QUEUE.enqueue(run_download,job_id,url,quality)
         except RuntimeError:
             CANCEL_EVENTS.pop(job_id, None)
             update_job(job_id, status="failed", phase="Failed",
@@ -1055,7 +1071,7 @@ def main():
     try: server.serve_forever()
     except KeyboardInterrupt: pass
     finally:
-        EXECUTOR.shutdown(wait=False,cancel_futures=True); server.server_close()
+        JOB_QUEUE.shutdown(wait=False, cancel_pending=True); server.server_close()
 
 
 if __name__ == "__main__": main()
