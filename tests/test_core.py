@@ -101,6 +101,20 @@ class DriftHelperTests(unittest.TestCase):
                 self.assertEqual(response.status, 200)
                 page = response.read().decode("utf-8")
             self.assertIn("<title>", page)
+            with urlopen(base_url + "/css/style.css", timeout=5) as response:
+                self.assertEqual(response.status, 200)
+                self.assertIn("--accent", response.read().decode("utf-8"))
+            with urlopen(base_url + "/js/app.js", timeout=5) as response:
+                self.assertEqual(response.status, 200)
+                self.assertIn("API_BASE", response.read().decode("utf-8"))
+            head_request = __import__("urllib.request", fromlist=["Request"]).Request(
+                base_url + "/css/style.css", method="HEAD"
+            )
+            with urlopen(head_request, timeout=5) as response:
+                self.assertEqual(response.status, 200)
+                self.assertGreater(int(response.headers["Content-Length"]), 0)
+            handler = object.__new__(drift.Handler)
+            self.assertIsNone(handler.static_file_path("/%2e%2e/drift.py"))
         finally:
             server.shutdown()
             server.server_close()
