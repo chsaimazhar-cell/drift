@@ -83,3 +83,11 @@ A provider billing alert is not always a hard spending cap. The service must als
 ## Not yet done
 
 No production migration, provider provisioning, database creation, object-storage setup, public deployment, domain purchase, or advertisements have been performed. The current branch is the safe work area; `main` remains the source of truth until reviewed changes are ready.
+
+## Verification update
+
+The latest GitHub Actions run for commit `bcaa29580e88fa425dd326e513ee9717a99957b6` completed successfully. The workflow validates the Python test suite, builds the extracted frontend, checks JavaScript syntax, validates the Compose configuration, and builds the container image.
+
+The branch now also includes bounded HTTP handler concurrency, FFmpeg probe and conversion timeouts, an HTTP idle-connection timeout, startup recovery for interrupted jobs, stricter URL port/control-character validation, and tests for these protections.
+
+A passing CI run verifies the tested code and build steps; it does **not** establish production readiness. In particular, the DNS/redirect egress risk remains unresolved until the hosting network enforces outbound restrictions. The current app must not be exposed as an unrestricted public downloader. Keep it to controlled testing until the target backend, durable shared services, trusted proxy boundary, and network egress policy are implemented and verified.
