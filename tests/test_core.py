@@ -654,6 +654,31 @@ class DriftHelperTests(unittest.TestCase):
                     self.assertEqual(response.status, 206)
                     self.assertEqual(response.read(), b"2345")
                     self.assertEqual(response.headers.get("Content-Range"), "bytes 2-5/16")
+
+                object_job = drift.get_job(job_id)
+                object_job.update({
+                    "id": uuid.uuid4().hex, "file_path": None, "storage_backend": "object",
+                    "object_key": "jobs/test/media.mp4", "object_content_type": "video/mp4",
+                    "object_size": len(media_bytes), "object_expires_at": drift.now() + 60,
+                })
+                drift.insert_job(object_job)
+
+                class FakeObjectStore:
+                    def open_file_range(self, object_key, start, end):
+                        if object_key != "jobs/test/media.mp4":
+                            raise FileNotFoundError(object_key)
+                        return io.BytesIO(media_bytes[start:end + 1])
+
+                with patch.object(drift, "PRIVATE_MEDIA_STORE", FakeObjectStore()):
+                    object_url = base_url + f"/api/downloads/{object_job['id']}/file"
+                    object_request = __import__("urllib.request", fromlist=["Request"]).Request(
+                        object_url, headers={"Range": "bytes=4-8"}
+                    )
+                    with urlopen(object_request, timeout=5) as response:
+                        self.assertEqual(response.status, 206)
+                        self.assertEqual(response.read(), b"45678")
+                        self.assertEqual(response.headers.get("Content-Range"), "bytes 4-8/16")
+                        self.assertIn("attachment", response.headers.get("Content-Disposition"))
             finally:
                 server.shutdown()
                 server.server_close()
