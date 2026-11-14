@@ -729,7 +729,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def send_cors(self):
         origin = self.headers.get("Origin")
-        allowed = os.getenv("DRIFT_ALLOWED_ORIGIN", "*").strip()
+        allowed = os.getenv("DRIFT_ALLOWED_ORIGIN", "").strip()
         if allowed == "*" and origin:
             self.send_header("Access-Control-Allow-Origin", "*")
         elif origin and allowed and origin == allowed:
@@ -738,7 +738,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         origin = self.headers.get("Origin")
-        allowed = os.getenv("DRIFT_ALLOWED_ORIGIN", "*").strip()
+        allowed = os.getenv("DRIFT_ALLOWED_ORIGIN", "").strip()
         self.send_response(204)
         if allowed == "*" and origin:
             self.send_header("Access-Control-Allow-Origin", "*")
