@@ -1028,19 +1028,30 @@ class DriftHelperTests(unittest.TestCase):
     def test_local_dispatcher_submits_due_job_and_avoids_duplicate_in_flight(self):
         queue = drift.LocalThreadPoolJobQueue(max_workers=1)
         job = {"id": "due-retry", "url": "https://youtube.com/watch?v=due", "quality": "best"}
+        claim_started = threading.Event()
+        release_claim = threading.Event()
+
+        def hold_claim(*_args, **_kwargs):
+            claim_started.set()
+            release_claim.wait(timeout=2)
+            return None
+
         with patch.object(drift, "JOB_REPOSITORY") as repository, patch.object(
             drift, "run_download"
         ):
             repository.list_due_jobs.return_value = [{"id": job["id"]}]
-            repository.claim_job.return_value = None
+            repository.claim_job.side_effect = hold_claim
             try:
                 self.assertEqual(queue.dispatch_due_jobs(), 1)
+                self.assertTrue(claim_started.wait(timeout=2))
                 self.assertEqual(queue.dispatch_due_jobs(), 0)
+                release_claim.set()
                 deadline = time.monotonic() + 2
                 while queue._in_flight and time.monotonic() < deadline:
                     time.sleep(0.01)
                 repository.claim_job.assert_called_once()
             finally:
+                release_claim.set()
                 queue.shutdown(wait=True, cancel_pending=True)
 
     def test_run_download_propagates_transient_setup_failure_for_queue_retry(self):
