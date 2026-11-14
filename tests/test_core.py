@@ -1,6 +1,7 @@
 """Focused unit tests for Drift's validation and helper functions."""
 
 import importlib.util
+import io
 import os
 import socket
 import subprocess
@@ -91,6 +92,26 @@ class DriftHelperTests(unittest.TestCase):
                         "SELECT COUNT(*) FROM jobs WHERE status IN ('queued','downloading','processing')"
                     ).fetchone()[0]
                 self.assertEqual(count, 1)
+
+    def test_json_body_requires_content_type_and_valid_length(self):
+        handler = object.__new__(drift.Handler)
+        handler.headers = {"Content-Type": "text/plain", "Content-Length": "2"}
+        handler.rfile = io.BytesIO(b"{}")
+        with self.assertRaisesRegex(ValueError, "application/json"):
+            handler.read_json()
+
+        handler.headers = {"Content-Type": "application/json", "Content-Length": "-1"}
+        with self.assertRaisesRegex(ValueError, "empty"):
+            handler.read_json()
+
+        handler.headers = {"Content-Type": "application/json", "Content-Length": "2"}
+        handler.rfile = io.BytesIO(b"{")
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            handler.read_json()
+
+        handler.headers = {"Content-Type": "application/json", "Content-Length": "2"}
+        handler.rfile = io.BytesIO(b"{}")
+        self.assertEqual(handler.read_json(), {})
 
     def test_public_job_hides_internal_storage_paths(self):
         job = {
