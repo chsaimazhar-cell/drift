@@ -61,6 +61,7 @@ The application does not install or upgrade packages at startup. Install depende
 | `DRIFT_MAX_QUEUED_JOBS` | `4` | Maximum waiting jobs |
 | `DRIFT_FFMPEG_PROBE_TIMEOUT_SECONDS` | `30` | Maximum media inspection time |
 | `DRIFT_FFMPEG_CONVERSION_TIMEOUT_SECONDS` | `900` | Maximum MP4 conversion time (15 minutes) |
+| `DRIFT_HTTP_SOCKET_TIMEOUT_SECONDS` | `30` | Idle HTTP connection timeout |
 | `DRIFT_DOWNLOAD_ROOT` | System temporary directory | Download and database directory |
 | `DRIFT_DB_PATH` | `<download root>/drift.sqlite3` | SQLite database path |
 | `DRIFT_ALLOWED_ORIGIN` | `*` | CORS origin for a separately hosted frontend |
