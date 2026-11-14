@@ -69,6 +69,19 @@ class DriftHelperTests(unittest.TestCase):
         self.assertTrue(valid)
         self.assertEqual(parsed.hostname, "www.youtube.com")
 
+    def test_http_access_logs_redact_job_capabilities_and_query_strings(self):
+        from contextlib import redirect_stdout
+        output = io.StringIO()
+        handler = object.__new__(drift.Handler)
+        handler.client_address = ("127.0.0.1", 12345)
+        with redirect_stdout(output):
+            handler.log_message('"%s" %s %s', "GET /api/downloads/secret-job-token/file?sig=secret HTTP/1.1", "200", "-")
+        logged = output.getvalue()
+        self.assertNotIn("secret-job-token", logged)
+        self.assertNotIn("sig=secret", logged)
+        self.assertIn("[redacted-job-id]", logged)
+        self.assertIn("[redacted]", logged)
+
     def test_http_handler_applies_idle_socket_timeout(self):
         class FakeConnection:
             timeout = None
