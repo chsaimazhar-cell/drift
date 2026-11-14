@@ -147,7 +147,7 @@ class SQLiteJobRepository:
     adapter before running multiple API or worker instances.
     """
 
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     @staticmethod
     def _migration_1(conn: sqlite3.Connection) -> None:
@@ -183,7 +183,32 @@ class SQLiteJobRepository:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_updated ON jobs(updated_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)")
 
-    MIGRATIONS = ((1, _migration_1.__func__),)
+    @staticmethod
+    def _migration_2(conn: sqlite3.Connection) -> None:
+        """Add queue scheduling and worker-lease metadata to existing jobs."""
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}
+        additions = (
+            ("attempts", "INTEGER NOT NULL DEFAULT 0"),
+            ("available_at", "REAL NOT NULL DEFAULT 0"),
+            ("lease_owner", "TEXT"),
+            ("lease_expires_at", "REAL"),
+        )
+        for column, definition in additions:
+            if column not in existing:
+                conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} {definition}")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_jobs_queue_claim "
+            "ON jobs(status, available_at, created_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_jobs_lease_expiry "
+            "ON jobs(status, lease_expires_at)"
+        )
+
+    MIGRATIONS = (
+        (1, _migration_1.__func__),
+        (2, _migration_2.__func__),
+    )
 
     def initialize(self) -> None:
         """Apply versioned, transactional schema migrations, then recover interrupted work."""
@@ -308,6 +333,112 @@ class SQLiteJobRepository:
             ).fetchall()]
             conn.commit()
         return {"expired": expired, "tracked": tracked}
+
+    def claim_job(
+        self, job_id: str, worker_id: str, lease_seconds: int = 300, timestamp: float | None = None
+    ) -> dict | None:
+        """Atomically claim one queued job for a worker and issue a bounded lease."""
+        if not worker_id or lease_seconds < 1:
+            raise ValueError("A worker ID and positive lease duration are required.")
+        timestamp = now() if timestamp is None else timestamp
+        with DB_LOCK, db() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute(
+                """UPDATE jobs
+                   SET status='downloading', phase='Claimed', lease_owner=?,
+                       lease_expires_at=?, attempts=attempts+1, updated_at=?
+                   WHERE id=? AND status='queued' AND available_at<=?
+                         AND (lease_expires_at IS NULL OR lease_expires_at<=?)""",
+                (worker_id, timestamp + lease_seconds, timestamp, job_id, timestamp, timestamp),
+            )
+            if cursor.rowcount != 1:
+                conn.rollback()
+                return None
+            row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+            conn.commit()
+        return row_to_job(row) if row else None
+
+    def renew_lease(
+        self, job_id: str, worker_id: str, lease_seconds: int = 300, timestamp: float | None = None
+    ) -> bool:
+        if not worker_id or lease_seconds < 1:
+            raise ValueError("A worker ID and positive lease duration are required.")
+        timestamp = now() if timestamp is None else timestamp
+        with DB_LOCK, db() as conn:
+            cursor = conn.execute(
+                """UPDATE jobs SET lease_expires_at=?, updated_at=?
+                   WHERE id=? AND lease_owner=? AND status IN ('downloading','processing')
+                         AND lease_expires_at>?""",
+                (timestamp + lease_seconds, timestamp, job_id, worker_id, timestamp),
+            )
+            conn.commit()
+        return cursor.rowcount == 1
+
+    def acknowledge_job(self, job_id: str, worker_id: str, timestamp: float | None = None) -> bool:
+        """Release a worker lease only after the job has reached a terminal state."""
+        timestamp = now() if timestamp is None else timestamp
+        with DB_LOCK, db() as conn:
+            cursor = conn.execute(
+                """UPDATE jobs SET lease_owner=NULL, lease_expires_at=NULL, updated_at=?
+                   WHERE id=? AND lease_owner=? AND status IN ('ready','failed','cancelled')""",
+                (timestamp, job_id, worker_id),
+            )
+            conn.commit()
+        return cursor.rowcount == 1
+
+    def retry_job(
+        self, job_id: str, worker_id: str, delay_seconds: int = 30,
+        max_attempts: int = 3, timestamp: float | None = None
+    ) -> bool:
+        """Requeue a leased job with bounded attempts and a not-before timestamp."""
+        if delay_seconds < 0 or max_attempts < 1:
+            raise ValueError("Retry delay and attempt limit are invalid.")
+        timestamp = now() if timestamp is None else timestamp
+        with DB_LOCK, db() as conn:
+            cursor = conn.execute(
+                """UPDATE jobs
+                   SET status=CASE WHEN attempts < ? THEN 'queued' ELSE 'failed' END,
+                       phase=CASE WHEN attempts < ? THEN 'Queued' ELSE 'Failed' END,
+                       message=CASE WHEN attempts < ? THEN 'Retry scheduled.' ELSE 'Retry limit reached.' END,
+                       error=CASE WHEN attempts < ? THEN NULL ELSE 'Retry limit reached.' END,
+                       available_at=?, lease_owner=NULL, lease_expires_at=NULL, updated_at=?
+                   WHERE id=? AND lease_owner=? AND status IN ('downloading','processing')""",
+                (max_attempts, max_attempts, max_attempts, max_attempts,
+                 timestamp + delay_seconds, timestamp, job_id, worker_id),
+            )
+            conn.commit()
+        return cursor.rowcount == 1
+
+    def recover_expired_leases(
+        self, max_attempts: int = 3, timestamp: float | None = None
+    ) -> list[dict]:
+        """Requeue expired worker leases, or fail jobs that exhausted their attempts."""
+        if max_attempts < 1:
+            raise ValueError("Attempt limit must be positive.")
+        timestamp = now() if timestamp is None else timestamp
+        with DB_LOCK, db() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                """SELECT id, attempts FROM jobs
+                   WHERE status IN ('downloading','processing')
+                     AND lease_expires_at IS NOT NULL AND lease_expires_at<=?
+                   ORDER BY lease_expires_at, created_at""",
+                (timestamp,),
+            ).fetchall()
+            for row in rows:
+                retryable = row["attempts"] < max_attempts
+                conn.execute(
+                    """UPDATE jobs SET status=?, phase=?, message=?, error=?,
+                       available_at=?, lease_owner=NULL, lease_expires_at=NULL, updated_at=?
+                       WHERE id=? AND lease_expires_at<=?""",
+                    ("queued" if retryable else "failed",
+                     "Queued" if retryable else "Failed",
+                     "Worker lease expired; retry scheduled." if retryable else "Worker lease expired; retry limit reached.",
+                     None if retryable else "Worker lease expired after the retry limit.",
+                     timestamp, timestamp, row["id"], timestamp),
+                )
+            conn.commit()
+        return [dict(row) for row in rows]
 
     def active_count(self) -> int:
         with DB_LOCK, db() as conn:
