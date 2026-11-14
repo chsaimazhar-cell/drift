@@ -86,8 +86,13 @@ class LocalThreadPoolJobQueue:
 
     def __init__(self, max_workers: int, repository: JobRepository | None = None):
         self.max_workers = max(1, max_workers)
-        self.repository = repository or JOB_REPOSITORY
+        self._repository = repository
         self.executor = ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="drift-download")
+
+    @property
+    def repository(self) -> JobRepository:
+        """Resolve the default repository at use time; explicit injections stay pinned."""
+        return self._repository if self._repository is not None else JOB_REPOSITORY
         self._lock = threading.Lock()
         self._in_flight: set[str] = set()
         self._stop_dispatcher = threading.Event()
