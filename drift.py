@@ -400,7 +400,7 @@ class SQLiteJobRepository:
     )
 
     def initialize(self) -> None:
-        """Apply versioned, transactional schema migrations, then recover interrupted work."""
+        """Apply versioned, transactional schema migrations without mutating job state."""
         with DB_LOCK, db() as conn:
             current_version = conn.execute("PRAGMA user_version").fetchone()[0]
             if current_version > self.SCHEMA_VERSION:
