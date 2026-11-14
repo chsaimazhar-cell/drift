@@ -566,6 +566,42 @@ class DriftHelperTests(unittest.TestCase):
             self.assertFalse(drift.accepting_new_work())
         self.assertEqual(fake.calls, [("analyze:203.0.113.20", 20, 60, 1234.0)])
 
+    def test_shared_abuse_controls_instances_use_one_atomic_store(self):
+        class FakeAtomicStore:
+            def __init__(self):
+                self.windows = {}
+                self.paused = False
+                self.lock = threading.Lock()
+
+            def consume_request(self, key, limit, window_seconds, timestamp):
+                with self.lock:
+                    recent = [
+                        stamp for stamp in self.windows.get(key, [])
+                        if stamp > timestamp - window_seconds
+                    ]
+                    if len(recent) >= limit:
+                        self.windows[key] = recent
+                        return False
+                    recent.append(timestamp)
+                    self.windows[key] = recent
+                    return True
+
+            def accepting_work(self):
+                with self.lock:
+                    return not self.paused
+
+        store = FakeAtomicStore()
+        api_a = drift.SharedAbuseControls(store)
+        api_b = drift.SharedAbuseControls(store)
+        self.assertIsInstance(store, drift.AtomicAbuseStateStore)
+        self.assertIsInstance(api_a, drift.AbuseControls)
+        self.assertTrue(api_a.allow_request("download:client-a", 2, 60, 1000.0))
+        self.assertTrue(api_b.allow_request("download:client-a", 2, 60, 1001.0))
+        self.assertFalse(api_a.allow_request("download:client-a", 2, 60, 1002.0))
+        store.paused = True
+        self.assertFalse(api_a.accepting_work())
+        self.assertFalse(api_b.accepting_work())
+
     def test_rate_limit_blocks_requests_over_the_limit(self):
         class FakeHandler:
             client_address = ("203.0.113.10", 12345)
