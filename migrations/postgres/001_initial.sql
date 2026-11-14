@@ -96,3 +96,7 @@ CREATE INDEX IF NOT EXISTS idx_drift_jobs_object_expiry
 -- them to/from the existing Unix-second values at the application boundary.
 -- Local workspace paths are diagnostic/ephemeral only and must never be treated
 -- as durable media storage in a production deployment.
+
+INSERT INTO drift_schema_migrations (version)
+VALUES (1)
+ON CONFLICT (version) DO NOTHING;
