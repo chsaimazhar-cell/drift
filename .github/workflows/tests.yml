@@ -32,6 +32,8 @@ jobs:
         env:
           DRIFT_API_BASE_URL: https://backend.example.invalid
         run: npm run build
+      - name: Check frontend JavaScript syntax
+        run: node --check public/js/app.js && node --check public/runtime-config.js
       - name: Validate deployment Compose configuration
         env:
           DRIFT_ALLOWED_ORIGIN: https://drift.example.invalid
