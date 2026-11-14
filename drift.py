@@ -1028,6 +1028,7 @@ def ensure_compatible_mp4(media: Path, job_id: str, lease_lost_event=None) -> Pa
 
     Files that are already compatible are left untouched (fast). Otherwise only what is needed is re-encoded.
     """
+    check_worker_lease(lease_lost_event)
     ffmpeg = find_ffmpeg()
     if not ffmpeg:
         raise RuntimeError("FFmpeg is not available. Restart Drift so it can install it.")
