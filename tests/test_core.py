@@ -122,6 +122,89 @@ class DriftHelperTests(unittest.TestCase):
                 self.assertEqual(stored["status"], "failed")
                 self.assertIn("restarted", stored["message"])
 
+    def test_sqlite_migrations_create_fresh_schema_and_record_version(self):
+        with tempfile.TemporaryDirectory() as temp:
+            database = Path(temp) / "fresh.sqlite3"
+            with patch.object(drift, "DB_PATH", database):
+                drift.JOB_REPOSITORY.initialize()
+                with drift.db() as conn:
+                    version = conn.execute("PRAGMA user_version").fetchone()[0]
+                    columns = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}
+                    indexes = {row["name"] for row in conn.execute("PRAGMA index_list(jobs)")}
+                self.assertEqual(version, drift.JOB_REPOSITORY.SCHEMA_VERSION)
+                self.assertIn("id", columns)
+                self.assertIn("file_path", columns)
+                self.assertIn("idx_jobs_updated", indexes)
+                self.assertIn("idx_jobs_status", indexes)
+
+    def test_sqlite_migrations_adopt_existing_schema_without_losing_jobs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            database = Path(temp) / "legacy.sqlite3"
+            with patch.object(drift, "DB_PATH", database):
+                drift.JOB_REPOSITORY.initialize()
+                legacy_job = {
+                    "id": "legacy-preserved", "status": "ready", "phase": "Ready",
+                    "url": "https://youtube.com/watch?v=legacy", "quality": "best",
+                    "format": "MP4", "platform": "YouTube",
+                    "created_at": drift.now(), "updated_at": drift.now(),
+                }
+                drift.JOB_REPOSITORY.insert(legacy_job)
+                with drift.db() as conn:
+                    conn.execute("PRAGMA user_version = 0")
+                drift.JOB_REPOSITORY.initialize()
+                self.assertEqual(drift.get_job("legacy-preserved")["status"], "ready")
+                with drift.db() as conn:
+                    self.assertEqual(
+                        conn.execute("PRAGMA user_version").fetchone()[0],
+                        drift.JOB_REPOSITORY.SCHEMA_VERSION,
+                    )
+
+    def test_sqlite_migrations_are_idempotent(self):
+        with tempfile.TemporaryDirectory() as temp:
+            database = Path(temp) / "idempotent.sqlite3"
+            with patch.object(drift, "DB_PATH", database):
+                drift.JOB_REPOSITORY.initialize()
+                drift.JOB_REPOSITORY.initialize()
+                with drift.db() as conn:
+                    self.assertEqual(
+                        conn.execute("PRAGMA user_version").fetchone()[0],
+                        drift.JOB_REPOSITORY.SCHEMA_VERSION,
+                    )
+                    self.assertEqual(
+                        conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='jobs'").fetchone()[0],
+                        1,
+                    )
+
+    def test_sqlite_migration_failure_rolls_back_schema_and_version(self):
+        with tempfile.TemporaryDirectory() as temp:
+            database = Path(temp) / "rollback.sqlite3"
+
+            def failing_migration(conn):
+                conn.execute("CREATE TABLE migration_probe (id INTEGER PRIMARY KEY)")
+                raise RuntimeError("simulated migration failure")
+
+            with patch.object(drift, "DB_PATH", database), patch.object(
+                drift.SQLiteJobRepository, "MIGRATIONS", ((1, failing_migration),)
+            ):
+                with self.assertRaisesRegex(RuntimeError, "simulated migration failure"):
+                    drift.JOB_REPOSITORY.initialize()
+                with drift.db() as conn:
+                    version = conn.execute("PRAGMA user_version").fetchone()[0]
+                    probe = conn.execute(
+                        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='migration_probe'"
+                    ).fetchone()[0]
+                self.assertEqual(version, 0)
+                self.assertEqual(probe, 0)
+
+    def test_sqlite_repository_rejects_newer_schema_versions(self):
+        with tempfile.TemporaryDirectory() as temp:
+            database = Path(temp) / "future.sqlite3"
+            with patch.object(drift, "DB_PATH", database):
+                with drift.db() as conn:
+                    conn.execute(f"PRAGMA user_version = {drift.JOB_REPOSITORY.SCHEMA_VERSION + 1}")
+                with self.assertRaisesRegex(RuntimeError, "newer than this Drift backend supports"):
+                    drift.JOB_REPOSITORY.initialize()
+
     def test_sqlite_repository_lifecycle_operations(self):
         with tempfile.TemporaryDirectory() as temp:
             database = Path(temp) / "jobs.sqlite3"
