@@ -210,11 +210,12 @@ def insert_job_if_capacity(job: dict) -> bool:
         ready_bytes = conn.execute(
             "SELECT COALESCE(SUM(file_size), 0) FROM jobs WHERE status='ready'"
         ).fetchone()[0]
-        reserved_bytes = total * MAX_DOWNLOAD_BYTES
-        if ready_bytes + reserved_bytes + MAX_DOWNLOAD_BYTES > MAX_STORAGE_BYTES:
+        reserved_bytes = total * MAX_DOWNLOAD_BYTES * 2
+        # Allow room for the source file and a temporary converted MP4 at once.
+        if ready_bytes + reserved_bytes + (MAX_DOWNLOAD_BYTES * 2) > MAX_STORAGE_BYTES:
             return False
         try:
-            if shutil.disk_usage(DOWNLOAD_ROOT).free < MAX_DOWNLOAD_BYTES:
+            if shutil.disk_usage(DOWNLOAD_ROOT).free < (MAX_DOWNLOAD_BYTES * 2):
                 return False
         except OSError:
             return False
