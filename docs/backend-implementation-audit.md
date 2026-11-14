@@ -14,13 +14,9 @@ The repository has a useful provider-neutral foundation, but the current runtime
 
 **Severity: High — correctness**
 
-The SQLite repository has retry scheduling primitives, but the current worker path does not complete a retry cycle:
+The initial worker failure-state bug has been corrected on the working branch: ordinary download exceptions now propagate to `LocalThreadPoolJobQueue`, which can move a leased job back to `queued` (or to terminal `failed` after the attempt limit). A regression test covers propagation from `run_download()`, and another covers the queue's retry transition.
 
-- `run_download()` catches ordinary exceptions and changes the job to `failed` instead of returning a retryable failure to the queue adapter.
-- `LocalThreadPoolJobQueue._execute_claimed()` only calls `retry_job()` when an exception escapes `run_download()`; by then, the normal failure path has already made the job terminal, so the repository retry predicate (`downloading` or `processing`) does not match.
-- Even if a job is moved back to `queued`, the in-memory queue has no durable dispatcher that scans and republishes due jobs.
-
-**Required resolution:** Define typed retryable versus terminal worker failures; make the worker own the state transition; add a durable dispatcher/claim loop; test transient failure, exhausted attempts, duplicate delivery, and process restart. Do not describe retries as operational until these tests pass.
+**Still incomplete:** the local in-memory queue does not automatically redispatch a job when its `available_at` retry time arrives. The retry state transition is now testable, but automatic retry execution and restart-safe dispatch require a due-job dispatcher backed by durable shared state. Typed transient-versus-terminal error classification, duplicate delivery, exhausted attempts, and process restart still need coverage. Do not describe retries as operational until these tests pass.
 
 ### 2. Startup recovery fails queued work instead of resuming it
 
