@@ -104,3 +104,21 @@ No backend provider, managed database, queue, object-storage vendor, paid plan, 
 ## Current launch status
 
 **Not ready to deploy.** The current Vercel configuration builds the frontend only. A working download service requires the separate backend architecture above. The readiness checklist in `docs/public-deployment-readiness.md` remains the launch gate.
+
+
+## Standalone PostgreSQL worker runtime (preparation)
+
+`postgres_worker.py` provides a separately runnable worker loop around
+`PostgresJobRepository`. It claims one due job with the repository's atomic
+`SKIP LOCKED` operation, renews its lease in a heartbeat thread, schedules
+retry after processor failures, acknowledges terminal jobs, and periodically
+recovers expired leases. It accepts a processor callback so the worker runtime
+does not own downloader or provider configuration.
+
+This is a tested runtime component, not a production-ready worker deployment.
+The existing downloader still uses the local SQLite repository, local
+filesystem, and process-local cancellation events. A production processor
+must be refactored to use shared PostgreSQL state, private object storage,
+durable cancellation checks, and a worker-owned workspace before this runtime
+is connected to real downloads. No database driver, credentials, provider,
+worker service, or production connection is configured by this change.
