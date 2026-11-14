@@ -525,6 +525,17 @@ class DriftHelperTests(unittest.TestCase):
         with patch.dict(os.environ, {"DRIFT_TRUST_PROXY": "1"}):
             self.assertEqual(drift.client_key(FakeHandler()), "203.0.113.10")
 
+    def test_emergency_switch_pauses_new_work_and_defaults_open(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertTrue(drift.accepting_new_work())
+        for disabled in ("0", "false", "no", "off", "disabled"):
+            with self.subTest(value=disabled), patch.dict(
+                os.environ, {"DRIFT_ACCEPTING_WORK": disabled}
+            ):
+                self.assertFalse(drift.accepting_new_work())
+        with patch.dict(os.environ, {"DRIFT_ACCEPTING_WORK": "TRUE"}):
+            self.assertTrue(drift.accepting_new_work())
+
     def test_rate_limit_blocks_requests_over_the_limit(self):
         class FakeHandler:
             client_address = ("203.0.113.10", 12345)
@@ -547,6 +558,7 @@ class DriftHelperTests(unittest.TestCase):
                 self.assertEqual(response.status, 200)
                 health = json.loads(response.read().decode("utf-8"))
             self.assertEqual(health["status"], "ok")
+            self.assertIn("accepting_work", health)
             with urlopen(base_url + "/", timeout=5) as response:
                 self.assertEqual(response.status, 200)
                 page = response.read().decode("utf-8")
