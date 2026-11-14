@@ -97,6 +97,28 @@ class DriftHelperTests(unittest.TestCase):
             handler.setup()
         self.assertEqual(handler.connection.timeout, 17)
 
+    def test_schema_initialization_does_not_preempt_startup_job_recovery(self):
+        with tempfile.TemporaryDirectory() as temp:
+            database = Path(temp) / "startup-order.sqlite3"
+            with patch.object(drift, "DB_PATH", database):
+                drift.init_db()
+                base = {
+                    "phase": "Queued", "url": "https://www.youtube.com/watch?v=test",
+                    "quality": "best", "format": "MP4", "platform": "YouTube",
+                    "created_at": drift.now(), "updated_at": drift.now(),
+                }
+                drift.JOB_REPOSITORY.insert(dict(base, id="queued-before-restart", status="queued"))
+                drift.JOB_REPOSITORY.insert(dict(base, id="interrupted-before-restart", status="processing"))
+
+                # The real startup sequence initializes/migrates first, then runs recovery.
+                drift.init_db()
+                self.assertEqual(drift.get_job("queued-before-restart")["status"], "queued")
+                self.assertEqual(drift.get_job("interrupted-before-restart")["status"], "processing")
+
+                drift.recover_interrupted_jobs()
+                self.assertEqual(drift.get_job("queued-before-restart")["status"], "queued")
+                self.assertEqual(drift.get_job("interrupted-before-restart")["status"], "queued")
+
     def test_startup_requeues_interrupted_jobs_and_removes_partial_files(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / "downloads"
