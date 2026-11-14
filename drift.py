@@ -41,6 +41,7 @@ PORT = int(os.getenv("PORT") or os.getenv("DRIFT_PORT") or "5000")   # Render gi
 HOST = os.getenv("DRIFT_HOST") or ("0.0.0.0" if os.getenv("PORT") else "127.0.0.1")
 MAX_URL_LENGTH = 4096
 MAX_DOWNLOAD_BYTES = int(os.getenv("DRIFT_MAX_DOWNLOAD_MB", "500")) * 1024 * 1024
+MAX_STORAGE_BYTES = int(os.getenv("DRIFT_MAX_STORAGE_MB", "2048")) * 1024 * 1024
 JOB_TTL_SECONDS = int(os.getenv("DRIFT_JOB_TTL_SECONDS", str(30 * 60)))
 MAX_ACTIVE_JOBS = max(1, int(os.getenv("DRIFT_MAX_ACTIVE_JOBS", "2")))
 MAX_QUEUED_JOBS = max(0, int(os.getenv("DRIFT_MAX_QUEUED_JOBS", "4")))
@@ -203,6 +204,19 @@ def insert_job_if_capacity(job: dict) -> bool:
             "SELECT COUNT(*) FROM jobs WHERE status IN ('queued','downloading','processing')"
         ).fetchone()[0]
         if total >= MAX_TOTAL_JOBS:
+            return False
+        # Reserve the maximum permitted size for each queued/active job and
+        # account for completed files until their normal TTL cleanup.
+        ready_bytes = conn.execute(
+            "SELECT COALESCE(SUM(file_size), 0) FROM jobs WHERE status='ready'"
+        ).fetchone()[0]
+        reserved_bytes = total * MAX_DOWNLOAD_BYTES
+        if ready_bytes + reserved_bytes + MAX_DOWNLOAD_BYTES > MAX_STORAGE_BYTES:
+            return False
+        try:
+            if shutil.disk_usage(DOWNLOAD_ROOT).free < MAX_DOWNLOAD_BYTES:
+                return False
+        except OSError:
             return False
         conn.execute(
             f"INSERT INTO jobs ({','.join(columns)}) VALUES ({placeholders})",
@@ -817,7 +831,7 @@ class Handler(BaseHTTPRequestHandler):
              "completed_at":None,"job_dir":None,"file_path":None,"duration":str(body.get("duration") or "")[:100]}
         if not insert_job_if_capacity(job):
             CANCEL_EVENTS.pop(job_id, None)
-            return self.send_json({"success":False,"message":"The download queue is full. Please wait for an active download to finish."},429)
+            return self.send_json({"success":False,"message":"Drift is at its current capacity. Please wait for a download to finish or for temporary files to expire."},429)
         try:
             EXECUTOR.submit(run_download,job_id,url,quality)
         except RuntimeError:
