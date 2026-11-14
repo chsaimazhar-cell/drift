@@ -48,6 +48,7 @@ MAX_QUEUED_JOBS = max(0, int(os.getenv("DRIFT_MAX_QUEUED_JOBS", "4")))
 MAX_TOTAL_JOBS = MAX_ACTIVE_JOBS + MAX_QUEUED_JOBS
 MAX_HTTP_CONNECTIONS = max(4, int(os.getenv("DRIFT_MAX_HTTP_CONNECTIONS", "32")))
 FFMPEG_PROBE_TIMEOUT_SECONDS = max(5, int(os.getenv("DRIFT_FFMPEG_PROBE_TIMEOUT_SECONDS", "30")))
+FFMPEG_CONVERSION_TIMEOUT_SECONDS = max(30, int(os.getenv("DRIFT_FFMPEG_CONVERSION_TIMEOUT_SECONDS", "900")))
 DOWNLOAD_ROOT = Path(os.getenv("DRIFT_DOWNLOAD_ROOT", str(Path(tempfile.gettempdir()) / "drift-downloads")))
 DOWNLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 DB_PATH = Path(os.getenv("DRIFT_DB_PATH", str(DOWNLOAD_ROOT / "drift.sqlite3")))
@@ -513,10 +514,14 @@ def ensure_compatible_mp4(media: Path, job_id: str) -> Path:
     cmd += ["-movflags", "+faststart", str(output_path)]
     process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
                                encoding="utf-8", errors="replace")
+    deadline = time.monotonic() + FFMPEG_CONVERSION_TIMEOUT_SECONDS
     try:
         while True:
             try:
-                _, error_output = process.communicate(timeout=0.5)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(cmd, FFMPEG_CONVERSION_TIMEOUT_SECONDS)
+                _, error_output = process.communicate(timeout=min(0.5, remaining))
                 break
             except subprocess.TimeoutExpired:
                 event = CANCEL_EVENTS.get(job_id)
@@ -528,6 +533,16 @@ def ensure_compatible_mp4(media: Path, job_id: str) -> Path:
                         process.kill()
                         process.communicate()
                     raise DownloadCancelled()
+                if time.monotonic() >= deadline:
+                    process.terminate()
+                    try:
+                        process.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.communicate()
+                    raise RuntimeError(
+                        f"FFmpeg conversion exceeded the {FFMPEG_CONVERSION_TIMEOUT_SECONDS}-second time limit."
+                    )
         if process.returncode:
             raise RuntimeError(f"FFmpeg could not create a playable MP4: {(error_output or '')[-600:].strip()}")
         if not output_path.exists() or output_path.stat().st_size == 0:
