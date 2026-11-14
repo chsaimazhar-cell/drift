@@ -403,9 +403,10 @@ class PostgresJobRepository:
         return int(row["count"])
 
     def cancel_active(self, job_id):
-        self._execute(
+        """Atomically cancel active work and invalidate its worker lease."""
+        return self._execute(
             "UPDATE drift_jobs SET status='cancelled', phase='Cancelled', "
             "message='Cancelling download…', lease_owner=NULL, lease_expires_at=NULL, updated_at=NOW() "
             "WHERE id=%s AND status IN ('queued','downloading','processing')",
             (job_id,),
-        )
+        ) == 1
