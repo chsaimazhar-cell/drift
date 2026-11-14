@@ -536,6 +536,36 @@ class DriftHelperTests(unittest.TestCase):
         with patch.dict(os.environ, {"DRIFT_ACCEPTING_WORK": "TRUE"}):
             self.assertTrue(drift.accepting_new_work())
 
+    def test_local_abuse_controls_window_limit_and_interface(self):
+        controls = drift.LocalAbuseControls()
+        self.assertIsInstance(controls, drift.AbuseControls)
+        with patch.object(drift, "now", return_value=1000.0):
+            self.assertTrue(controls.allow_request("download:client-a", 2, 60, drift.now()))
+            self.assertTrue(controls.allow_request("download:client-a", 2, 60, drift.now()))
+            self.assertFalse(controls.allow_request("download:client-a", 2, 60, drift.now()))
+            self.assertTrue(controls.allow_request("download:client-b", 2, 60, drift.now()))
+        with patch.dict(os.environ, {"DRIFT_ACCEPTING_WORK": "false"}):
+            self.assertFalse(controls.accepting_work())
+        with patch.dict(os.environ, {"DRIFT_ACCEPTING_WORK": "true"}):
+            self.assertTrue(controls.accepting_work())
+
+    def test_request_helpers_use_replaceable_abuse_controls(self):
+        class FakeControls:
+            def __init__(self):
+                self.calls = []
+            def allow_request(self, key, limit, window_seconds, timestamp):
+                self.calls.append((key, limit, window_seconds, timestamp))
+                return False
+            def accepting_work(self):
+                return False
+
+        fake = FakeControls()
+        handler = type("FakeHandler", (), {"client_address": ("203.0.113.20", 1234)})()
+        with patch.object(drift, "ABUSE_CONTROLS", fake), patch.object(drift, "now", return_value=1234.0):
+            self.assertFalse(drift.rate_limit(handler, "analyze", 20, 60))
+            self.assertFalse(drift.accepting_new_work())
+        self.assertEqual(fake.calls, [("analyze:203.0.113.20", 20, 60, 1234.0)])
+
     def test_rate_limit_blocks_requests_over_the_limit(self):
         class FakeHandler:
             client_address = ("203.0.113.10", 12345)
