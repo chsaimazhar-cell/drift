@@ -93,17 +93,31 @@ class PostgresRepositoryIntegrationTests(unittest.TestCase):
         self.assertEqual(self.repo.get(job["id"])["status"], "queued")
 
     def test_startup_recovery_and_terminal_expiry(self):
-        queued = self.make_job()
+        queued = self.make_job(
+            lease_owner="stale-worker",
+            lease_expires_at=1_800_000_050.0,
+            available_at=1_800_000_500.0,
+        )
         interrupted = self.make_job(status="processing", attempts=1, job_dir="/tmp/drift-test")
+        exhausted = self.make_job(status="downloading", attempts=3, job_dir="/tmp/drift-exhausted")
         expired = self.make_job(status="failed", updated_at=1.0, job_dir="/tmp/drift-expired")
         self.repo.insert(queued)
         self.repo.insert(interrupted)
+        self.repo.insert(exhausted)
         self.repo.insert(expired)
 
         recovered = self.repo.recover_interrupted(max_attempts=3, timestamp=1_800_000_100.0)
-        self.assertEqual({row["id"] for row in recovered}, {queued["id"], interrupted["id"]})
+        self.assertEqual(
+            {row["id"] for row in recovered},
+            {queued["id"], interrupted["id"], exhausted["id"]},
+        )
         self.assertEqual(self.repo.get(interrupted["id"])["status"], "queued")
-        self.assertEqual(self.repo.get(queued["id"])["status"], "queued")
+        recovered_queued = self.repo.get(queued["id"])
+        self.assertEqual(recovered_queued["status"], "queued")
+        self.assertIsNone(recovered_queued["lease_owner"])
+        self.assertIsNone(recovered_queued["lease_expires_at"])
+        self.assertAlmostEqual(recovered_queued["available_at"], queued["available_at"], places=3)
+        self.assertEqual(self.repo.get(exhausted["id"])["status"], "failed")
 
         cleanup = self.repo.expired_jobs(cutoff=2.0)
         self.assertIn(expired["id"], {row["id"] for row in cleanup["expired"]})
