@@ -1071,6 +1071,7 @@ def ensure_compatible_mp4(media: Path, job_id: str, lease_lost_event=None) -> Pa
                 if remaining <= 0:
                     raise subprocess.TimeoutExpired(cmd, FFMPEG_CONVERSION_TIMEOUT_SECONDS)
                 _, error_output = process.communicate(timeout=min(0.5, remaining))
+                check_worker_lease(lease_lost_event)
                 break
             except subprocess.TimeoutExpired:
                 check_worker_lease(lease_lost_event)
@@ -1098,6 +1099,16 @@ def ensure_compatible_mp4(media: Path, job_id: str, lease_lost_event=None) -> Pa
         if not output_path.exists() or output_path.stat().st_size == 0:
             raise RuntimeError("FFmpeg produced an empty file.")
         return output_path
+    except WorkerLeaseLost:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate()
+        output_path.unlink(missing_ok=True)
+        raise
     except BaseException:
         output_path.unlink(missing_ok=True)
         raise
@@ -1171,6 +1182,7 @@ def run_download(job_id: str, url: str, quality: str, *, lease_lost_event=None) 
                 "object_size": None, "object_expires_at": None,
                 "message": "Your MP4 is ready to save.", "completed_at": now(),
             }
+            check_worker_lease(lease_lost_event)
             if not mark_job_ready(job_id, **ready_updates):
                 MEDIA_STORAGE.delete_workspace(job_dir)
         else:
@@ -1189,6 +1201,7 @@ def run_download(job_id: str, url: str, quality: str, *, lease_lost_event=None) 
                 "object_expires_at": expires_at,
                 "message": "Your MP4 is ready to save.", "completed_at": now(),
             }
+            check_worker_lease(lease_lost_event)
             if mark_job_ready(job_id, **ready_updates):
                 uploaded_object_key = None  # The repository now owns this object reference.
             MEDIA_STORAGE.delete_workspace(job_dir)
