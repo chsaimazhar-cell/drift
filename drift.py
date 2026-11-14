@@ -390,7 +390,8 @@ class SQLiteJobRepository:
     def expired_jobs(self, cutoff: float) -> dict:
         with DB_LOCK, db() as conn:
             rows = conn.execute(
-                "SELECT id, job_dir, status, updated_at FROM jobs WHERE updated_at < ?",
+                """SELECT id, job_dir, status, updated_at, storage_backend, object_key
+                   FROM jobs WHERE updated_at < ?""",
                 (cutoff,),
             ).fetchall()
             expired = [dict(row) for row in rows if row["status"] not in {"queued", "downloading", "processing"}]
@@ -1072,6 +1073,11 @@ def cleanup_once() -> None:
     cleanup = JOB_REPOSITORY.expired_jobs(cutoff)
     tracked = {Path(path).name for path in cleanup["tracked"] if path}
     MEDIA_STORAGE.cleanup_stale(tracked, cutoff)
+    if PRIVATE_MEDIA_STORE is not None:
+        for expired_job in cleanup["expired"]:
+            if expired_job.get("storage_backend") == "object" and expired_job.get("object_key"):
+                PRIVATE_MEDIA_STORE.delete_object(expired_job["object_key"])
+        PRIVATE_MEDIA_STORE.delete_expired_objects(cutoff)
 
 
 def cleanup_loop() -> None:
