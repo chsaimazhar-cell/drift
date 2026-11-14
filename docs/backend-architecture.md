@@ -74,6 +74,10 @@ Job IDs must remain high entropy and be treated as bearer capabilities unless a 
 - Do not add a second API server or worker until the interfaces and lifecycle tests are in place.
 
 ### Phase B — production adapters (requires provider and budget approval)
+
+A draft PostgreSQL baseline is now checked in at `migrations/postgres/001_initial.sql`. It defines job lifecycle/lease fields, queue and expiry indexes, a schema-version table, and a singleton admission guard intended to serialize global capacity checks across API replicas. It also documents the transactional `FOR UPDATE SKIP LOCKED` claim pattern.
+
+This is a schema draft only: it has not been applied to PostgreSQL, validated against a live server, or wired to a Python repository adapter. The SQL migration runner, driver choice, timestamp conversion, transactional repository methods, and real concurrency/restart tests remain unimplemented. Do not treat the file as production-ready or run it against a production database without review and integration testing.
 - Select managed SQL, durable queue, private object storage, and a worker-capable host.
 - Implement and integration-test a real private object-store adapter, including signed URL expiry, object-scoped permissions, range downloads, retention cleanup, and failure handling.
 - Implement provider adapters and database migrations.
