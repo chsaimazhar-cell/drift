@@ -674,6 +674,12 @@ def client_key(handler: BaseHTTPRequestHandler) -> str:
     return handler.client_address[0] or "unknown"
 
 
+def accepting_new_work() -> bool:
+    """Local emergency switch; shared production enforcement belongs in AbuseControls."""
+    value = os.getenv("DRIFT_ACCEPTING_WORK", "true").strip().lower()
+    return value not in {"0", "false", "no", "off", "disabled"}
+
+
 def rate_limit(handler: BaseHTTPRequestHandler, bucket: str, limit: int, window_seconds: int) -> bool:
     key = f"{bucket}:{client_key(handler)}"
     cutoff = now() - window_seconds
@@ -1214,7 +1220,8 @@ class Handler(BaseHTTPRequestHandler):
             active = JOB_REPOSITORY.active_count()
             return self.send_json({"status":"ok","service":"drift-backend","downloader":yt_dlp is not None,
                                    "ffmpeg":find_ffmpeg() is not None,"active_jobs":active,
-                                   "max_active_jobs":MAX_ACTIVE_JOBS})
+                                   "max_active_jobs":MAX_ACTIVE_JOBS,
+                                   "accepting_work":accepting_new_work()})
         m = re.fullmatch(r"/api/downloads/([A-Za-z0-9_-]+)", path)
         if m:
             job = get_job(m.group(1))
@@ -1300,6 +1307,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"success":False,"message":"Not found."},404)
 
     def analyze(self):
+        if not accepting_new_work():
+            return self.send_json({"success":False,"message":"Drift is temporarily pausing new work. Please try again later."},503)
         if not rate_limit(self,"analyze",20,60): return self.send_json({"success":False,"message":"Too many analysis requests. Please wait a moment."},429)
         if yt_dlp is None: return self.send_json({"success":False,"message":"yt-dlp is not installed. Run: python -m pip install -r requirements.txt"},500)
         try: body=self.read_json()
@@ -1320,6 +1329,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"success":False,"message":clean_error(exc)},422)
 
     def create_download(self):
+        if not accepting_new_work():
+            return self.send_json({"success":False,"message":"Drift is temporarily pausing new work. Please try again later."},503)
         if not rate_limit(self,"download",5,60): return self.send_json({"success":False,"message":"Download limit reached. Please wait a moment."},429)
         if yt_dlp is None: return self.send_json({"success":False,"message":"yt-dlp is not installed. Run: python -m pip install -r requirements.txt"},500)
         try: body=self.read_json()
