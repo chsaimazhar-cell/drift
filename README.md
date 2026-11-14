@@ -54,7 +54,8 @@ The application does not install or upgrade packages at startup. Install depende
 |---|---:|---|
 | `PORT` / `DRIFT_PORT` | `5000` | HTTP port |
 | `DRIFT_HOST` | `127.0.0.1` locally; `0.0.0.0` when `PORT` is set | Bind address |
-| `DRIFT_MAX_DOWNLOAD_MB` | `500` | Maximum downloaded file size and per-job storage reservation |\n| `DRIFT_MAX_STORAGE_MB` | `2048` | Maximum reserved active-download plus retained completed-file storage |
+| `DRIFT_MAX_DOWNLOAD_MB` | `500` | Maximum downloaded file size and per-job storage reservation |
+| `DRIFT_MAX_STORAGE_MB` | `2048` | Maximum reserved active-download plus retained completed-file storage |
 | `DRIFT_JOB_TTL_SECONDS` | `1800` | Finished job retention |
 | `DRIFT_MAX_ACTIVE_JOBS` | `2` | Background worker count |
 | `DRIFT_MAX_QUEUED_JOBS` | `4` | Maximum waiting jobs |
