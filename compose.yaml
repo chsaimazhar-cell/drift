@@ -1,0 +1,44 @@
+services:
+  drift-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: drift-backend:local
+    container_name: drift-backend
+    restart: unless-stopped
+    init: true
+    ports:
+      # Keep the backend private; terminate HTTPS at a trusted reverse proxy.
+      - "127.0.0.1:5000:5000"
+    environment:
+      PORT: "5000"
+      DRIFT_HOST: "0.0.0.0"
+      DRIFT_DOWNLOAD_ROOT: "/data"
+      DRIFT_DB_PATH: "/data/drift.sqlite3"
+      DRIFT_MAX_DOWNLOAD_MB: "${DRIFT_MAX_DOWNLOAD_MB:-300}"
+      DRIFT_MAX_STORAGE_MB: "${DRIFT_MAX_STORAGE_MB:-2048}"
+      DRIFT_MAX_ACTIVE_JOBS: "${DRIFT_MAX_ACTIVE_JOBS:-1}"
+      DRIFT_MAX_QUEUED_JOBS: "${DRIFT_MAX_QUEUED_JOBS:-2}"
+      DRIFT_JOB_TTL_SECONDS: "${DRIFT_JOB_TTL_SECONDS:-1800}"
+      DRIFT_ALLOWED_ORIGIN: "${DRIFT_ALLOWED_ORIGIN:?Set DRIFT_ALLOWED_ORIGIN to the exact HTTPS frontend origin}"
+      DRIFT_TRUST_PROXY: "${DRIFT_TRUST_PROXY:-false}"
+    volumes:
+      - drift-data:/data
+    mem_limit: 2g
+    cpus: 2.0
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/api/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  drift-data:
+    name: drift-data
