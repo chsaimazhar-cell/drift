@@ -417,13 +417,6 @@ class SQLiteJobRepository:
                 conn.commit()
                 current_version = version
 
-            conn.execute("""
-                UPDATE jobs
-                SET status='failed', phase='Failed', error='Backend restarted while this download was running.',
-                    message='The backend restarted before this download completed.', updated_at=?
-                WHERE status IN ('queued','downloading','processing')
-            """, (now(),))
-            conn.commit()
 
     def get(self, job_id: str) -> dict | None:
         with DB_LOCK, db() as conn:
