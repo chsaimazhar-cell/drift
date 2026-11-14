@@ -1187,8 +1187,9 @@ def run_download(job_id: str, url: str, quality: str, *, lease_lost_event=None) 
         else:
             object_key = f"jobs/{job_id}/{uuid.uuid4().hex}.mp4"
             stored = PRIVATE_MEDIA_STORE.put_file(final_path, object_key, "video/mp4", final_name)
-            check_worker_lease(lease_lost_event)
+            # Track the upload before checking the lease so lease loss cannot orphan it.
             uploaded_object_key = stored.object_key
+            check_worker_lease(lease_lost_event)
             if stored.object_key != object_key or stored.size_bytes != size or stored.content_type != "video/mp4":
                 raise RuntimeError("Private storage returned inconsistent media metadata.")
             expires_at = now() + JOB_TTL_SECONDS
