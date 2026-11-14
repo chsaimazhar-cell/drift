@@ -111,7 +111,7 @@ Billing alerts are not necessarily hard spending caps. Application-enforced quot
 ### Remaining deployment blockers
 
 - [x] Add a provider-neutral PostgreSQL repository adapter with conditional claims, leases, bounded retries, shared capacity reservation, recovery, and retention operations; helper tests only.\n- [ ] Wire PostgreSQL into the application, add a reviewed migration runner/driver, and pass live PostgreSQL transaction, concurrency, restart, and restore integration tests.
-- [ ] Independent durable worker, lease heartbeat, restart/crash recovery, idempotency, and orphan reconciliation.
+- [ ] Package and operate the independent worker with safe shutdown, crash/restart, duplicate-delivery, idempotency, and orphan-reconciliation guarantees.
 - [ ] Real private object storage adapter, signed download authorization, retention, and deletion.
 - [ ] Real shared abuse-control adapter, global quotas, daily limits, usage accounting, and kill switch.
 - [ ] Trusted reverse-proxy boundary and safe client-IP handling.
@@ -123,6 +123,18 @@ Billing alerts are not necessarily hard spending caps. Application-enforced quot
 - [ ] Private beta, monitoring, incident response, and restore procedure verified.
 
 See [outbound-network-security-policy.md](outbound-network-security-policy.md), [private-beta-verification-runbook.md](private-beta-verification-runbook.md), and [backend-implementation-audit.md](backend-implementation-audit.md). These are plans and test criteria, not evidence that provider controls are active.
+
+### Downloader-to-PostgreSQL integration update (2026-11-14)
+
+- [x] Add lease-owner-fenced PostgreSQL update and ready-transition methods.
+- [x] Add per-task repository injection to the existing downloader without changing the local API's default SQLite behavior.
+- [x] Add `postgres_downloader.py` to construct a lease-fenced processor callback for `PostgresWorker`.
+- [x] Scope optional private media storage through a per-task context rather than mutating a process-global storage reference.
+- [x] Add unit tests for lease-bound progress updates, ready transitions, processor argument propagation, and missing lease owners.
+- [x] Add PostgreSQL integration tests proving stale owners cannot update progress or publish artifacts, and that terminal acknowledgement clears the lease after completion.
+- [x] CI run `43640499715` completed Python unit and PostgreSQL integration tests, frontend build, JavaScript checks, and Compose validation successfully; backend Docker build was still running at the time of this update.
+
+This is a safe code-level bridge, not production activation. The API still uses SQLite and the local queue; the worker adapter has no configured database credentials or real object-storage provider. Do not deploy it as a production worker until the API, cancellation, storage, shared abuse controls, network policy, and failure-injection requirements are complete.
 
 ## Explicit approval boundary
 
@@ -145,8 +157,8 @@ Research and repository preparation are approved. Provider account creation, ext
 
 ### Remaining engineering work before a usable separate worker
 
-- [ ] Integrate the existing downloader processor with the PostgreSQL worker without relying on process-local SQLite state or cancellation events.
-- [ ] Make worker lease loss observable to the processor and stop/contain work safely when ownership is lost; test worker crash, stale worker, and duplicate delivery behavior.
+- [x] Add a lease-fenced downloader processor adapter that injects the PostgreSQL repository into downloader operations; the API is still SQLite-backed, so this is not end-to-end activation.
+- [x] Forward worker lease-loss signals into yt-dlp hooks and FFmpeg conversion; fence progress and ready-state writes by lease owner, with integration/unit coverage. Worker crash, stale-worker, duplicate-delivery, and orphan reconciliation tests remain.
 - [ ] Package the PostgreSQL repository and worker into a dedicated worker image/entrypoint; the current Dockerfile only packages the API process and does not install a PostgreSQL driver.
 - [ ] Add a worker deployment definition only after the processor, storage, cancellation, and shutdown contracts are safe.
 - [ ] Verify database connection pooling, graceful shutdown, bounded concurrency, and idempotent artifact finalization.
@@ -168,5 +180,5 @@ Research and repository preparation are approved. Provider account creation, ext
 
 - [x] Worker runtime now exposes an in-process `_lease_lost_event` signal to its processor callback, marks lease loss when renewal returns false or raises, and refuses to acknowledge or reschedule a job after ownership is lost.
 - [x] Added a unit test proving a processor can observe lease loss and that the worker does not acknowledge/retry under stale ownership.
-- [ ] The current downloader does not yet consume this signal; its yt-dlp/FFmpeg work must be refactored to cooperate with cancellation and lease loss before production integration.
-- [ ] A processor that ignores the signal can continue external work after lease loss. Do not deploy this runtime as a production worker until the downloader is cooperative and duplicate side effects are controlled.
+- [x] The downloader now accepts the lease-loss signal in yt-dlp progress/postprocessor hooks and FFmpeg conversion, and aborts before finalization when ownership is lost.
+- [ ] Production activation is still blocked: the API remains on SQLite, cancellation is not yet shared end-to-end, storage is local unless a real private provider is configured, and duplicate side effects/orphan reconciliation need failure-injection tests.
