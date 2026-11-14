@@ -307,7 +307,18 @@ def clean_error(exc: Exception) -> str:
 
 
 def client_key(handler: BaseHTTPRequestHandler) -> str:
-    # Never trust X-Forwarded-For unless an explicit trusted-proxy setup is added.
+    # Only enable this when the hosting proxy overwrites/sanitizes X-Forwarded-For
+    # and the backend cannot be reached directly by untrusted clients.
+    trust_proxy = os.getenv("DRIFT_TRUST_PROXY", "").strip().lower() in {"1", "true", "yes"}
+    if trust_proxy:
+        headers = getattr(handler, "headers", {})
+        forwarded = headers.get("X-Forwarded-For", "") if headers else ""
+        candidate = forwarded.split(",", 1)[0].strip()
+        try:
+            if candidate:
+                return str(ipaddress.ip_address(candidate))
+        except ValueError:
+            pass
     return handler.client_address[0] or "unknown"
 
 
