@@ -194,37 +194,42 @@ class PostgresJobRepository:
             conn.close()
 
     def recover_interrupted(self, max_attempts=3, timestamp=None):
-        """Recover interrupted work at controlled startup before workers begin."""
+        """Recover all interrupted work atomically before any worker starts."""
         if max_attempts < 1:
             raise ValueError("Attempt limit must be positive.")
-        rows = self._execute(
-            "SELECT id, status, attempts, job_dir FROM drift_jobs "
-            "WHERE status IN ('queued','downloading','processing') ORDER BY created_at",
-            fetchall=True,
-        )
-        recovered = []
-        for row in rows:
-            if row["status"] == "queued":
-                self._execute(
-                    "UPDATE drift_jobs SET lease_owner=NULL, lease_expires_at=NULL "
-                    "WHERE id=%s AND status='queued'", (row["id"],)
-                )
-                recovered.append(row)
-                continue
-            retryable = int(row["attempts"]) < max_attempts
-            self._execute(
-                "UPDATE drift_jobs SET status=%s, phase=%s, message=%s, error=%s, "
-                "available_at=COALESCE(to_timestamp(%s),NOW()), lease_owner=NULL, "
-                "lease_expires_at=NULL, updated_at=COALESCE(to_timestamp(%s),NOW()) "
-                "WHERE id=%s AND status IN ('downloading','processing')",
-                ("queued" if retryable else "failed",
-                 "Queued" if retryable else "Failed",
-                 "The service restarted; retry scheduled." if retryable else "The service restarted after the retry limit.",
-                 None if retryable else "The service restarted after the retry limit.",
-                 timestamp, timestamp, row["id"]),
-            )
-            recovered.append(row)
-        return recovered
+        conn = self.connect()
+        try:
+            with conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT id, status, attempts, job_dir FROM drift_jobs "
+                        "WHERE status IN ('queued','downloading','processing') "
+                        "ORDER BY created_at FOR UPDATE"
+                    )
+                    rows = self._dict_rows(cursor, cursor.fetchall())
+                    for row in rows:
+                        if row["status"] == "queued":
+                            cursor.execute(
+                                "UPDATE drift_jobs SET lease_owner=NULL, lease_expires_at=NULL "
+                                "WHERE id=%s AND status='queued'",
+                                (row["id"],),
+                            )
+                            continue
+                        retryable = int(row["attempts"]) < max_attempts
+                        cursor.execute(
+                            "UPDATE drift_jobs SET status=%s, phase=%s, message=%s, error=%s, "
+                            "available_at=COALESCE(to_timestamp(%s),NOW()), lease_owner=NULL, "
+                            "lease_expires_at=NULL, updated_at=COALESCE(to_timestamp(%s),NOW()) "
+                            "WHERE id=%s AND status IN ('downloading','processing')",
+                            ("queued" if retryable else "failed",
+                             "Queued" if retryable else "Failed",
+                             "The service restarted; retry scheduled." if retryable else "The service restarted after the retry limit.",
+                             None if retryable else "The service restarted after the retry limit.",
+                             timestamp, timestamp, row["id"]),
+                        )
+                    return rows
+        finally:
+            conn.close()
 
     def expired_jobs(self, cutoff):
         """Delete terminal job records past retention and return objects/workspaces for cleanup."""
