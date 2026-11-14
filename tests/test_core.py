@@ -1005,6 +1005,34 @@ class DriftHelperTests(unittest.TestCase):
                 )
                 self.assertEqual(drift.get_job("exhausted-job")["status"], "failed")
 
+    def test_run_download_propagates_transient_setup_failure_for_queue_retry(self):
+        with patch.object(drift, "MEDIA_STORAGE") as storage, patch.object(
+            drift, "update_job"
+        ) as update:
+            storage.create_workspace.side_effect = OSError("temporary storage failure")
+            with self.assertRaisesRegex(OSError, "temporary storage failure"):
+                drift.run_download("retryable-download", "https://youtube.com/watch?v=test", "best")
+            update.assert_not_called()
+
+    def test_local_job_queue_requeues_worker_exception(self):
+        queue = drift.LocalThreadPoolJobQueue(max_workers=1)
+        job = {"id": "worker-retry", "url": "https://youtube.com/watch?v=retry", "quality": "best"}
+        with patch.object(drift, "JOB_REPOSITORY") as repository, patch.object(
+            drift, "run_download", side_effect=RuntimeError("temporary downloader failure")
+        ):
+            repository.get.return_value = job
+            repository.claim_job.return_value = dict(job, status="downloading")
+            try:
+                future = queue.enqueue(job["id"])
+                with self.assertRaisesRegex(RuntimeError, "temporary downloader failure"):
+                    future.result(timeout=3)
+                repository.retry_job.assert_called_once_with(
+                    job["id"], unittest.mock.ANY, delay_seconds=30, max_attempts=queue.MAX_ATTEMPTS
+                )
+                repository.acknowledge_job.assert_not_called()
+            finally:
+                queue.shutdown(wait=True, cancel_pending=True)
+
     def test_local_job_queue_claims_runs_and_acknowledges_terminal_job(self):
         queue = drift.LocalThreadPoolJobQueue(max_workers=1)
         job = {"id": "worker-lifecycle", "url": "https://youtube.com/watch?v=worker", "quality": "best"}
