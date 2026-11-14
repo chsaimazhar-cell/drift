@@ -548,13 +548,8 @@ def find_ffmpeg() -> str | None:
 
 
 def find_media(job_dir: Path) -> Path | None:
-    candidates = [p for p in job_dir.rglob("*")
-                  if p.is_file() and p.suffix.lower() in MEDIA_SUFFIXES and ".part" not in p.name.lower()
-                  and not re.search(r"\.f\d+\.", p.name)]
-    if not candidates:  # merge failed: fall back to any media piece
-        candidates = [p for p in job_dir.rglob("*") if p.is_file() and p.suffix.lower() in MEDIA_SUFFIXES]
-    return max(candidates, key=lambda p: p.stat().st_size) if candidates else None
-
+    """Backward-compatible helper delegated to the configured storage adapter."""
+    return MEDIA_STORAGE.find_media(job_dir)
 
 def probe_media(media: Path) -> dict:
     """Read codecs with `ffmpeg -i` (works without ffprobe)."""
