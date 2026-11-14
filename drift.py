@@ -710,7 +710,11 @@ class Handler(BaseHTTPRequestHandler):
         self.connection.settimeout(HTTP_SOCKET_TIMEOUT_SECONDS)
 
     def log_message(self, fmt, *args):
-        print(f"[{time.strftime('%H:%M:%S')}] {self.client_address[0]} {fmt % args}")
+        # Job IDs authorize status, cancellation, and file access; never write them to logs.
+        message = fmt % args
+        message = re.sub(r"(/api/downloads/)[^/?\\s]+", r"\\1[redacted-job-id]", message)
+        message = re.sub(r"(GET|POST|HEAD) ([^?\\s]+)\\?[^\\s]+", r"\\1 \\2?[redacted]", message)
+        print(f"[{time.strftime('%H:%M:%S')}] {self.client_address[0]} {message}")
 
     def send_json(self, data: dict, status=200, headers=None):
         body = json_bytes(data)
