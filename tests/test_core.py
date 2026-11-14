@@ -259,6 +259,15 @@ class DriftHelperTests(unittest.TestCase):
     def test_error_messages_are_sanitized(self):
         self.assertIn("403/429", drift.clean_error(RuntimeError("HTTP Error 429")))
 
+    def test_provider_error_urls_do_not_leak_query_tokens_or_credentials(self):
+        message = "Failed https://user:pass@cdn.example/video?token=secret&sig=private#fragment"
+        cleaned = drift.clean_error(RuntimeError(message))
+        self.assertNotIn("secret", cleaned)
+        self.assertNotIn("private", cleaned)
+        self.assertNotIn("user", cleaned)
+        self.assertNotIn("pass", cleaned)
+        self.assertIn("[redacted URL]", cleaned)
+
     def test_cors_only_allows_configured_origin(self):
         class FakeHandler:
             headers = {"Origin": "https://attacker.example"}
