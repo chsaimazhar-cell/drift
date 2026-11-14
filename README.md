@@ -1,12 +1,12 @@
 # Drift
 
-Drift is a browser-based public-media downloader. A Python HTTP server serves the embedded frontend and exposes a small JSON API. It uses yt-dlp to inspect and retrieve publicly accessible media, SQLite to track jobs, and FFmpeg to prepare compatible MP4 files.
+Drift is a browser-based downloader for publicly accessible media. It provides a responsive HTML/CSS/JavaScript interface and a Python HTTP backend powered by yt-dlp, SQLite, and FFmpeg.
 
 > **Responsible use:** Only download content you own or are authorized to save. Follow copyright law and each source platform's terms. Drift is not designed to bypass DRM, private accounts, paywalls, or other access controls.
 
 ## Features
 
-- Embedded responsive HTML/CSS/JavaScript frontend.
+- Responsive frontend in `public/index.html`, `public/css/style.css`, and `public/js/app.js`.
 - URL validation with supported-host allowlisting and DNS checks.
 - Media analysis and quality selection.
 - Background download jobs with progress and cancellation.
@@ -22,7 +22,7 @@ Supported source domains are defined in `KNOWN_HOSTS` in `drift.py`. A domain be
 - Dependencies in `requirements.txt`.
 - FFmpeg on PATH, or the bundled executable supplied by `imageio-ffmpeg`.
 
-## Windows setup
+## Run locally (Windows)
 
 Open PowerShell in the repository folder:
 
@@ -36,9 +36,7 @@ python drift.py
 
 Open http://127.0.0.1:5000. Stop the server with Ctrl+C.
 
-The application does not install or upgrade packages at startup. Install dependencies explicitly inside the virtual environment before running it.
-
-## macOS and Linux
+## Run locally (macOS and Linux)
 
 ```bash
 python3 -m venv .venv
@@ -48,17 +46,20 @@ python -m pip install -r requirements.txt
 python drift.py
 ```
 
+The application does not install or upgrade packages at startup. Install dependencies explicitly inside the virtual environment before running it.
+
 ## Configuration
 
 | Environment variable | Default | Purpose |
-|---|---|---|
+|---|---:|---|
 | `PORT` / `DRIFT_PORT` | `5000` | HTTP port |
 | `DRIFT_HOST` | `127.0.0.1` locally; `0.0.0.0` when `PORT` is set | Bind address |
-| `DRIFT_MAX_DOWNLOAD_MB` | `500` | Download size limit |
+| `DRIFT_MAX_DOWNLOAD_MB` | `500` | Maximum downloaded file size |
 | `DRIFT_JOB_TTL_SECONDS` | `1800` | Finished job retention |
 | `DRIFT_MAX_ACTIVE_JOBS` | `2` | Background worker count |
+| `DRIFT_MAX_QUEUED_JOBS` | `4` | Maximum waiting jobs |
 | `DRIFT_DOWNLOAD_ROOT` | System temporary directory | Download and database directory |
-| `DRIFT_DB_PATH` | `<download root>/drift.sqlite3` | SQLite database |
+| `DRIFT_DB_PATH` | `<download root>/drift.sqlite3` | SQLite database path |
 | `DRIFT_ALLOWED_ORIGIN` | `*` | CORS origin for a separately hosted frontend |
 | `DRIFT_COOKIES_FILE` | `cookies.txt` beside the script if present | Optional yt-dlp cookie file |
 | `DRIFT_COOKIES_BROWSER` | unset | Optional browser cookie source supported by yt-dlp |
@@ -73,11 +74,24 @@ GET /api/health
 
 The endpoint reports downloader/FFmpeg availability and the current job queue size.
 
-## Security and deployment warning
+## Deployment status and architecture
 
-The current app does **not** provide user accounts, login, or API-key authentication. Its in-memory per-client rate limiter is only a basic abuse guard; it is not a security boundary and is not shared across multiple server processes. URL validation allowlists known media domains and rejects non-public DNS results, but DNS can change between validation and the downloader's later connection.
+The current backend is a long-running Python `ThreadingHTTPServer` with a local worker pool, SQLite database, and local temporary download files. It is suitable for local development and controlled single-instance testing, but it is **not ready for a public multi-instance production deployment**.
 
-Keep the server on localhost for personal use. Before public deployment, put it behind a properly configured authentication/access proxy, add production-grade rate limiting and monitoring, use persistent storage, and review the hosting provider's network controls. Do not assume CORS is authentication.
+A Vercel static deployment alone will not run this backend: the frontend calls same-origin `/api/*` endpoints for analysis, job creation, progress, cancellation, and file streaming. Deploying only the `public/` directory would therefore produce a page whose download functions do not work. The backend must first be adapted to a supported service/runtime, with durable shared job storage, background workers, and object storage or equivalent file delivery.
+
+Before opening Drift to worldwide public traffic, complete and verify:
+- A shared persistent database and durable job queue.
+- Durable download storage and safe file delivery.
+- Global abuse controls and correctly configured client-IP/proxy handling.
+- Outbound network protections against DNS rebinding and unsafe redirects.
+- Monitoring, hard usage limits, and provider spending safeguards.
+
+The current in-memory rate limiter and queue capacity apply only to one running process. Local SQLite and temporary files are not shared between instances and may be lost on hosts with ephemeral disks. Do not treat these controls as global quotas or a production security boundary.
+
+## Accounts and visitor access
+
+The current app does not require visitor accounts or provide user login. Keep this product requirement when implementing production abuse protection; use rate limits and other non-account safeguards instead of mandatory visitor registration.
 
 ## Tests
 
@@ -85,13 +99,17 @@ Keep the server on localhost for personal use. Before public deployment, put it 
 python -m unittest discover -s tests -v
 ```
 
-The unit tests cover URL validation, DNS rejection, quality selection, filename cleanup, error messages, and rate limiting. They do not prove that every third-party platform currently works. Real downloads must be tested manually with media you are authorized to download.
+The automated tests cover URL validation, DNS rejection, quality selection, filename cleanup, error messages, rate limiting, static frontend serving, API validation, job serialization, queue capacity, and file streaming. They do not prove that every third-party platform currently works. Real downloads must be tested manually with media you are authorized to download.
 
 ## Project layout
 
-- `drift.py` — backend server and embedded frontend.
+- `drift.py` — Python backend server and API.
+- `public/index.html` — frontend markup.
+- `public/css/style.css` — frontend styles.
+- `public/js/app.js` — frontend behavior and API calls.
 - `requirements.txt` — Python dependencies.
-- `tests/test_core.py` — helper and validation tests.
+- `tests/test_core.py` — backend and HTTP tests.
+- `.github/workflows/tests.yml` — automated tests on GitHub Actions.
 
 ## License
 
