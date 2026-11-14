@@ -131,3 +131,34 @@ Research and repository preparation are approved. Provider account creation, ext
 ## Launch decision
 
 **Not ready for production deployment.** Do not ask the owner to click Deploy yet. The static Vercel frontend alone is not a working downloader. Keep downloads free, visitor registration optional/non-required, the domain unpurchased, and advertisements deferred until the backend and safeguards are implemented and verified.
+
+
+## Verified repository status update (2026-11-14)
+
+### Completed preparation (not production activation)
+
+- [x] PostgreSQL migration runner with advisory locking and migration-version verification.
+- [x] PostgreSQL integration coverage for migrations, atomic admission, concurrent claims, lease renewal, retry, cancellation, startup recovery, and retention-related lifecycle behavior.
+- [x] Provider-neutral standalone PostgreSQL worker loop with lease heartbeat, retry scheduling, terminal acknowledgement, and expired-lease recovery; unit tests pass.
+- [x] PostgreSQL worker lifecycle tests and documentation; CI runs `43638776062`, `43638796170`, and `43638812145` passed.
+- [x] Corrected the PostgreSQL claim-next SQL clause ordering in commit `79f2f6e`; its CI run `43638990168` is pending verification.
+
+### Remaining engineering work before a usable separate worker
+
+- [ ] Integrate the existing downloader processor with the PostgreSQL worker without relying on process-local SQLite state or cancellation events.
+- [ ] Make worker lease loss observable to the processor and stop/contain work safely when ownership is lost; test worker crash, stale worker, and duplicate delivery behavior.
+- [ ] Package the PostgreSQL repository and worker into a dedicated worker image/entrypoint; the current Dockerfile only packages the API process and does not install a PostgreSQL driver.
+- [ ] Add a worker deployment definition only after the processor, storage, cancellation, and shutdown contracts are safe.
+- [ ] Verify database connection pooling, graceful shutdown, bounded concurrency, and idempotent artifact finalization.
+
+### Remaining shared production services and launch blockers
+
+- [ ] Wire PostgreSQL into the API and run end-to-end tests against it; current API deployment still uses SQLite.
+- [ ] Implement and test a real private object-storage provider adapter and signed download flow.
+- [ ] Implement real shared atomic abuse controls, global quotas, usage accounting, and an enforceable operational pause.
+- [ ] Enforce deny-by-default outbound network policy outside the application and test redirects/DNS rebinding.
+- [ ] Verify hard CPU, memory, wall-clock, file-size, storage, bandwidth/egress, and spending ceilings.
+- [ ] Run real-provider failure-injection, restart, load, backup/restore, and browser-to-download tests.
+- [ ] Select/connect providers and deploy only after separate explicit approval and an agreed spend ceiling.
+
+**Current launch decision remains: NOT READY.** The worker runtime is a repository component with passing unit tests; it is not yet a runnable production worker service, and the live application is not connected to PostgreSQL or cloud storage.
