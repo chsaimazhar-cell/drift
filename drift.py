@@ -84,8 +84,9 @@ class LocalThreadPoolJobQueue:
     MAX_ATTEMPTS = 3
     DISPATCH_INTERVAL_SECONDS = 1
 
-    def __init__(self, max_workers: int):
+    def __init__(self, max_workers: int, repository: JobRepository | None = None):
         self.max_workers = max(1, max_workers)
+        self.repository = repository or JOB_REPOSITORY
         self.executor = ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="drift-download")
         self._lock = threading.Lock()
         self._in_flight: set[str] = set()
@@ -93,7 +94,7 @@ class LocalThreadPoolJobQueue:
         self._dispatcher: threading.Thread | None = None
 
     def _execute_claimed(self, job_id: str, worker_id: str) -> None:
-        job = JOB_REPOSITORY.claim_job(job_id, worker_id, lease_seconds=self.LEASE_SECONDS)
+        job = self.repository.claim_job(job_id, worker_id, lease_seconds=self.LEASE_SECONDS)
         if job is None:
             return
 
@@ -103,7 +104,7 @@ class LocalThreadPoolJobQueue:
             interval = max(1, self.LEASE_SECONDS // 3)
             while not stop_heartbeat.wait(interval):
                 try:
-                    if not JOB_REPOSITORY.renew_lease(
+                    if not self.repository.renew_lease(
                         job_id, worker_id, lease_seconds=self.LEASE_SECONDS
                     ):
                         return
@@ -117,7 +118,7 @@ class LocalThreadPoolJobQueue:
         try:
             run_download(job_id, job["url"], job["quality"])
         except Exception:
-            JOB_REPOSITORY.retry_job(
+            self.repository.retry_job(
                 job_id, worker_id, delay_seconds=30, max_attempts=self.MAX_ATTEMPTS
             )
             raise
@@ -125,9 +126,9 @@ class LocalThreadPoolJobQueue:
             stop_heartbeat.set()
             heartbeat.join(timeout=2)
 
-        final_job = JOB_REPOSITORY.get(job_id)
+        final_job = self.repository.get(job_id)
         if final_job and final_job.get("status") in {"ready", "failed", "cancelled"}:
-            JOB_REPOSITORY.acknowledge_job(job_id, worker_id)
+            self.repository.acknowledge_job(job_id, worker_id)
         else:
             JOB_REPOSITORY.retry_job(
                 job_id, worker_id, delay_seconds=30, max_attempts=self.MAX_ATTEMPTS
@@ -157,7 +158,7 @@ class LocalThreadPoolJobQueue:
             capacity = self.max_workers - len(self._in_flight)
         if capacity <= 0:
             return 0
-        due_jobs = JOB_REPOSITORY.list_due_jobs(limit=capacity)
+        due_jobs = self.repository.list_due_jobs(limit=capacity)
         submitted = 0
         for job in due_jobs:
             if self._submit(job["id"]) is not None:
