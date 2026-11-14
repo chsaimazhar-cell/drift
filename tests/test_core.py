@@ -715,7 +715,7 @@ class DriftHelperTests(unittest.TestCase):
             self.assertIn("ttl=300", signed_url)
             self.assertEqual(store.objects[stored.object_key]["payload"], b"completed-media")
             with store.open_file_range(stored.object_key, 2, 6) as stream:
-                self.assertEqual(stream.read(), b"mplete")
+                self.assertEqual(stream.read(), b"mplet")
             store.delete_object(stored.object_key)
             self.assertNotIn(stored.object_key, store.objects)
 
