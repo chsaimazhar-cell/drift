@@ -114,3 +114,19 @@ The automated tests cover URL validation, DNS rejection, quality selection, file
 ## License
 
 No license file is currently present. Reuse and redistribution permissions are therefore not explicitly granted.
+
+
+## Build and run the backend as a container
+
+The repository includes a portable Docker image for the existing single-instance Python backend. This is a packaging step, not a production-scale architecture: it still uses one process, SQLite, a local worker queue, and local files.
+
+Build and run locally:
+
+```bash
+docker build -t drift-backend .
+docker run --rm -p 5000:5000 -v drift-data:/data drift-backend
+```
+
+Then check `http://localhost:5000/api/health`. The named Docker volume keeps the SQLite database and completed download files across container replacement. A production host must provide a persistent volume mounted at `/data`; without it, local job history and files can be lost.
+
+The container runs as a non-root user, installs FFmpeg, and includes an HTTP health check. Do not expose this single-instance container to unrestricted worldwide traffic yet. Before production, replace or externalize the local queue/database/file store, add shared abuse controls and outbound-network protections, and verify provider-level spending limits. A Vercel frontend can be connected later through a configured backend origin once a suitable backend host has been selected.
