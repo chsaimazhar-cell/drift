@@ -182,3 +182,12 @@ Research and repository preparation are approved. Provider account creation, ext
 - [x] Added a unit test proving a processor can observe lease loss and that the worker does not acknowledge/retry under stale ownership.
 - [x] The downloader now accepts the lease-loss signal in yt-dlp progress/postprocessor hooks and FFmpeg conversion, and aborts before finalization when ownership is lost.
 - [ ] Production activation is still blocked: the API remains on SQLite, cancellation is not yet shared end-to-end, storage is local unless a real private provider is configured, and duplicate side effects/orphan reconciliation need failure-injection tests.
+
+### Cancellation transition contract update
+
+- [x] Both SQLite and PostgreSQL repositories now return a boolean from `cancel_active(job_id)`: true only when an active job was atomically transitioned to cancelled, false for missing or already-terminal jobs.
+- [x] PostgreSQL integration coverage verifies cancellation clears the worker lease, decrements active capacity, and is idempotent for terminal/missing jobs.
+- [x] SQLite contract coverage verifies the same transition result semantics.
+- [x] Worker heartbeat observes the lease invalidation and signals the processor to stop; the shared cancellation path remains preparatory until the HTTP API is switched to PostgreSQL.
+
+This improves the repository contract but does not mean production cancellation is enabled. The API still uses the local SQLite repository and process-local cancellation event map.
