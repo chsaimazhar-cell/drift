@@ -67,6 +67,7 @@ Job IDs must remain high entropy and be treated as bearer capabilities unless a 
 - [x] Add repository-level atomic claim, lease renewal, terminal acknowledgement, bounded retry scheduling, and expired-lease recovery primitives with SQLite contract tests.
 - [x] Wire the local worker adapter to claim jobs before execution, renew leases during long downloads, acknowledge terminal jobs, and release failed worker attempts for retry. This remains an in-process development queue; it is not a durable broker or multi-instance production worker.
 - [x] Define a provider-neutral private object-store contract for completed-file upload, short-lived signed download URLs, object deletion, and retention cleanup; verify the contract with a fake adapter. No cloud provider is implemented or connected.
+- [x] Add a versioned SQLite migration for object-storage metadata (`storage_backend`, `object_key`, content type, size, and expiry), with persistence/default tests. Existing jobs remain local-file-backed; the fields are groundwork only and do not activate cloud storage.
 - Preserve the current frontend and all public endpoints.
 - Do not add a second API server or worker until the interfaces and lifecycle tests are in place.
 
