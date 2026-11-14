@@ -1,0 +1,33 @@
+"""Shared API-facing contract for local and managed job repositories.
+
+The protocol deliberately describes the operations required by HTTP handlers and
+maintenance tasks. Worker lease operations remain adapter-specific extensions.
+"""
+from __future__ import annotations
+
+from typing import Protocol, runtime_checkable
+
+
+@runtime_checkable
+class JobRepository(Protocol):
+    """Persistence contract required by the Drift HTTP API."""
+
+    def initialize(self) -> None: ...
+
+    def get(self, job_id: str) -> dict | None: ...
+
+    def update(self, job_id: str, updates: dict) -> None: ...
+
+    def mark_ready(self, job_id: str, updates: dict) -> bool: ...
+
+    def insert(self, job: dict) -> None: ...
+
+    def insert_if_capacity(self, job: dict) -> bool: ...
+
+    def active_count(self) -> int: ...
+
+    def cancel_active(self, job_id: str) -> bool: ...
+
+    def expired_jobs(self, cutoff: float) -> dict: ...
+
+    def recover_interrupted(self, max_attempts: int = 3) -> list[dict]: ...
