@@ -34,6 +34,23 @@ class DriftHelperTests(unittest.TestCase):
     def setUp(self):
         drift.RATE_WINDOWS.clear()
 
+    def test_downloader_hooks_stop_when_worker_lease_is_lost(self):
+        lost = threading.Event()
+        lost.set()
+        with self.assertRaises(drift.WorkerLeaseLost):
+            drift.progress_hook("job-lease-test", lost)({"status": "downloading"})
+        with self.assertRaises(drift.WorkerLeaseLost):
+            drift.postprocessor_hook("job-lease-test", lost)({"status": "started"})
+
+    def test_run_download_aborts_before_creating_workspace_after_lease_loss(self):
+        lost = threading.Event()
+        lost.set()
+        with patch.object(drift.MEDIA_STORAGE, "create_workspace") as create_workspace:
+            with self.assertRaises(drift.WorkerLeaseLost):
+                drift.run_download("job-lease-test", "https://youtube.com/watch?v=x", "best",
+                                   lease_lost_event=lost)
+        create_workspace.assert_not_called()
+
     def test_rejects_empty_and_non_http_urls(self):
         self.assertFalse(drift.validate_public_url("")[0])
         self.assertFalse(drift.validate_public_url("ftp://youtube.com/video")[0])
