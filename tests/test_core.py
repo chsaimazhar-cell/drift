@@ -143,6 +143,42 @@ class DriftHelperTests(unittest.TestCase):
                 self.assertIsNone(drift.get_job("repo-active"))
                 self.assertEqual(expired["tracked"], [])
 
+    def test_sqlite_repository_read_update_ready_and_recovery_contract(self):
+        with tempfile.TemporaryDirectory() as temp:
+            database = Path(temp) / "repository-contract.sqlite3"
+            with patch.object(drift, "DB_PATH", database):
+                drift.init_db()
+                repository = drift.JOB_REPOSITORY
+                base = {
+                    "status": "queued", "phase": "Queued", "progress": 0,
+                    "downloaded_bytes": 0, "total_bytes": 0,
+                    "url": "https://youtube.com/watch?v=contract", "quality": "best",
+                    "format": "MP4", "platform": "YouTube",
+                    "created_at": drift.now(), "updated_at": drift.now(),
+                }
+                repository.insert(dict(base, id="repo-contract-ready"))
+                self.assertEqual(repository.get("repo-contract-ready")["status"], "queued")
+                repository.update("repo-contract-ready", {"phase": "Preparing", "progress": 12})
+                updated = repository.get("repo-contract-ready")
+                self.assertEqual(updated["phase"], "Preparing")
+                self.assertEqual(updated["progress"], 12)
+                self.assertTrue(repository.mark_ready(
+                    "repo-contract-ready",
+                    {"phase": "Ready", "progress": 100, "filename": "ready.mp4"},
+                ))
+                self.assertEqual(repository.get("repo-contract-ready")["status"], "ready")
+                self.assertFalse(repository.mark_ready(
+                    "repo-contract-ready", {"phase": "Ready again"}
+                ))
+                self.assertIsNone(repository.get("missing-repository-job"))
+
+                repository.insert(dict(base, id="repo-contract-interrupted"))
+                interrupted = repository.recover_interrupted()
+                self.assertEqual([job["id"] for job in interrupted], ["repo-contract-interrupted"])
+                recovered = repository.get("repo-contract-interrupted")
+                self.assertEqual(recovered["status"], "failed")
+                self.assertIn("restarted", recovered["message"].lower())
+
     def test_media_probe_has_a_hard_timeout(self):
         timeout = subprocess.TimeoutExpired(cmd="ffmpeg", timeout=30)
         with patch.object(drift, "find_ffmpeg", return_value="ffmpeg"), patch.object(
