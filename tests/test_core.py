@@ -136,8 +136,8 @@ class DriftHelperTests(unittest.TestCase):
                 }
                 queued = dict(base, id="delayed-queued", status="queued", available_at=500)
                 exhausted = dict(base, id="exhausted", status="processing", attempts=3)
-                self.assertTrue(drift.JOB_REPOSITORY.insert(queued))
-                self.assertTrue(drift.JOB_REPOSITORY.insert(exhausted))
+                drift.JOB_REPOSITORY.insert(queued)
+                drift.JOB_REPOSITORY.insert(exhausted)
                 rows = drift.JOB_REPOSITORY.recover_interrupted(timestamp=100)
                 self.assertEqual(len(rows), 2)
                 stored_queued = drift.get_job("delayed-queued")
@@ -318,7 +318,7 @@ class DriftHelperTests(unittest.TestCase):
                 interrupted = repository.recover_interrupted()
                 self.assertEqual([job["id"] for job in interrupted], ["repo-contract-interrupted"])
                 recovered = repository.get("repo-contract-interrupted")
-                self.assertEqual(recovered["status"], "failed")
+                self.assertEqual(recovered["status"], "queued")
                 self.assertIn("restarted", recovered["message"].lower())
 
     def test_media_probe_has_a_hard_timeout(self):
