@@ -235,11 +235,18 @@ def validate_public_url(raw_url: str):
     if not isinstance(raw_url, str) or not raw_url.strip() or len(raw_url) > MAX_URL_LENGTH:
         return False, "Invalid URL."
     try:
-        parsed = urlparse(raw_url.strip())
-        if parsed.scheme.lower() not in ALLOWED_SCHEMES or not parsed.hostname:
+        cleaned_url = raw_url.strip()
+        if any(ord(char) < 32 or ord(char) == 127 for char in cleaned_url):
+            return False, "Invalid URL."
+        parsed = urlparse(cleaned_url)
+        scheme = parsed.scheme.lower()
+        if scheme not in ALLOWED_SCHEMES or not parsed.hostname:
             return False, "Only HTTP(S) URLs are supported."
         if parsed.username is not None or parsed.password is not None:
             return False, "URLs containing usernames or passwords are not allowed."
+        port = parsed.port
+        if port is not None and port != (443 if scheme == "https" else 80):
+            return False, "Only standard HTTP and HTTPS ports are supported."
         host = parsed.hostname.lower().rstrip(".")
         try:
             ip = ipaddress.ip_address(host)
