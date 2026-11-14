@@ -109,6 +109,28 @@ class PostgresRepositoryIntegrationTests(unittest.TestCase):
         self.assertIn(expired["id"], {row["id"] for row in cleanup["expired"]})
         self.assertIsNone(self.repo.get(expired["id"]))
 
+    def test_claim_next_job_is_safe_across_concurrent_workers(self):
+        jobs = [self.make_job(available_at=1.0) for _ in range(8)]
+        for job in jobs:
+            self.repo.insert(job)
+        barrier = threading.Barrier(8)
+
+        def claim(index):
+            barrier.wait(timeout=10)
+            return self.repo.claim_next_job(
+                f"worker-{index}", lease_seconds=60, timestamp=1_800_000_100.0
+            )
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            claimed = list(pool.map(claim, range(8)))
+        claimed_ids = [job["id"] for job in claimed if job]
+        self.assertEqual(len(claimed_ids), 8)
+        self.assertEqual(len(set(claimed_ids)), 8)
+        self.assertEqual(
+            {job["status"] for job in claimed if job}, {"downloading"}
+        )
+        self.assertEqual(self.repo.active_count(), 8)
+
     def test_capacity_admission_is_serialized_across_connections(self):
         barrier = threading.Barrier(8)
 
