@@ -69,6 +69,44 @@ class DriftHelperTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "inspection took too long"):
                 drift.probe_media(Path("slow-media.mp4"))
 
+    def test_media_conversion_has_a_hard_timeout(self):
+        class SlowProcess:
+            returncode = None
+
+            def __init__(self):
+                self.terminated = False
+                self.killed = False
+
+            def communicate(self, timeout=None):
+                if self.terminated or self.killed:
+                    return ("", "")
+                raise subprocess.TimeoutExpired(cmd="ffmpeg", timeout=timeout)
+
+            def terminate(self):
+                self.terminated = True
+
+            def kill(self):
+                self.killed = True
+
+        process = SlowProcess()
+        info = {
+            "video": [{"codec": "mpeg4", "pix_fmt": "yuv420p", "profile": "Simple",
+                       "w": 64, "h": 64}],
+            "audio": [],
+            "container": "avi",
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            media = Path(temp) / "source.avi"
+            media.write_bytes(b"source")
+            with patch.object(drift, "find_ffmpeg", return_value="ffmpeg"), patch.object(
+                drift, "probe_media", return_value=info
+            ), patch.object(drift.subprocess, "Popen", return_value=process), patch.object(
+                drift, "FFMPEG_CONVERSION_TIMEOUT_SECONDS", 30
+            ), patch.object(drift.time, "monotonic", side_effect=[0, 31, 31]):
+                with self.assertRaisesRegex(RuntimeError, "conversion exceeded"):
+                    drift.ensure_compatible_mp4(media, "slow-conversion")
+            self.assertTrue(process.terminated)
+
     def test_quality_normalization_and_selector(self):
         self.assertEqual(drift.normalize_quality("720P"), "720p")
         self.assertEqual(drift.normalize_quality("9999p"), "best")
