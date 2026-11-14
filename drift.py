@@ -224,7 +224,7 @@ class SQLiteJobRepository:
             if ready_bytes + reserved_bytes + (MAX_DOWNLOAD_BYTES * 2) > MAX_STORAGE_BYTES:
                 return False
             try:
-                if shutil.disk_usage(DOWNLOAD_ROOT).free < (MAX_DOWNLOAD_BYTES * 2):
+                if MEDIA_STORAGE.free_bytes() < (MAX_DOWNLOAD_BYTES * 2):
                     return False
             except OSError:
                 return False
@@ -502,6 +502,38 @@ class DownloadTooLarge(Exception): pass
 MEDIA_SUFFIXES = {".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi", ".flv", ".3gp", ".ts"}
 
 
+class LocalMediaStorage:
+    """Local-disk implementation of the replaceable media storage boundary."""
+    def __init__(self, root: Path): self.root = root
+    def create_workspace(self, job_id: str) -> Path:
+        return Path(tempfile.mkdtemp(prefix="drift-" + job_id + "-", dir=self.root))
+    def find_media(self, job_dir: Path) -> Path | None:
+        candidates = [p for p in job_dir.rglob("*") if p.is_file() and p.suffix.lower() in MEDIA_SUFFIXES and ".part" not in p.name.lower() and not re.search(r"\.f\d+\.", p.name)]
+        if not candidates: candidates = [p for p in job_dir.rglob("*") if p.is_file() and p.suffix.lower() in MEDIA_SUFFIXES]
+        return max(candidates, key=lambda p: p.stat().st_size) if candidates else None
+    def size(self, path: Path) -> int: return path.stat().st_size
+    def finalize(self, source: Path, destination: Path) -> Path:
+        if source.resolve() != destination.resolve(): source.replace(destination)
+        return destination
+    def delete_workspace(self, path: Path | None) -> None:
+        if path is not None: shutil.rmtree(path, ignore_errors=True)
+    def is_file(self, path: Path) -> bool: return path.is_file()
+    def open_file(self, path: Path): return path.open("rb")
+    def free_bytes(self) -> int: return shutil.disk_usage(self.root).free
+    def remove_interrupted(self, raw_path: str | None) -> None:
+        if not raw_path: return
+        try:
+            path = Path(raw_path).resolve()
+            if path.parent == self.root.resolve() and path.name.startswith("drift-") and path.is_dir(): self.delete_workspace(path)
+        except (OSError, RuntimeError): return
+    def cleanup_stale(self, tracked: set[str], cutoff: float) -> None:
+        for directory in self.root.iterdir():
+            try:
+                if directory.name not in tracked and directory.is_dir() and directory.name.startswith("drift-") and directory.stat().st_mtime < cutoff: self.delete_workspace(directory)
+            except FileNotFoundError: pass
+
+MEDIA_STORAGE = LocalMediaStorage(DOWNLOAD_ROOT)
+
 @functools.lru_cache(maxsize=1)
 def find_ffmpeg() -> str | None:
     """Use the system FFmpeg if present, otherwise the one bundled with imageio-ffmpeg."""
@@ -667,7 +699,7 @@ def run_download(job_id: str, url: str, quality: str) -> None:
         if early and early.is_set():
             update_job(job_id, status="cancelled", phase="Cancelled", message="Download cancelled.")
             return
-        job_dir = Path(tempfile.mkdtemp(prefix=f"drift-{job_id}-", dir=DOWNLOAD_ROOT))
+        job_dir = MEDIA_STORAGE.create_workspace(job_id)
         update_job(job_id, job_dir=str(job_dir), status="downloading", phase="Downloading", progress=0,
                    message="Starting media transfer…")
         if yt_dlp is None:
@@ -685,23 +717,22 @@ def run_download(job_id: str, url: str, quality: str) -> None:
             info = ydl.extract_info(url, download=True)
         event = CANCEL_EVENTS.get(job_id)
         if event and event.is_set(): raise DownloadCancelled()
-        media = find_media(job_dir)
+        media = MEDIA_STORAGE.find_media(job_dir)
         if media is None: raise RuntimeError("The media file was not created.")
         media = ensure_compatible_mp4(media, job_id)
         event = CANCEL_EVENTS.get(job_id)
         if event and event.is_set(): raise DownloadCancelled()
-        size = media.stat().st_size
+        size = MEDIA_STORAGE.size(media)
         if size > MAX_DOWNLOAD_BYTES: raise DownloadTooLarge("The final media file exceeded Drift's 500 MB limit.")
         title = info.get("title") or "Drift video"
         duration = info.get("duration_string")
         final_name = safe_filename(title)
         final_path = job_dir / final_name
-        if media.resolve() != final_path.resolve():
-            media.replace(final_path)
+        MEDIA_STORAGE.finalize(media, final_path)
         if not mark_job_ready(job_id, phase="Ready", progress=100, title=title,
                               duration=duration, filename=final_name, file_path=str(final_path),
                               file_size=size, message="Your MP4 is ready to save.", completed_at=now()):
-            shutil.rmtree(job_dir, ignore_errors=True)
+            MEDIA_STORAGE.delete_workspace(job_dir)
     except DownloadCancelled:
         update_job(job_id, status="cancelled", phase="Cancelled", message="Download cancelled.")
         if job_dir is not None:
@@ -728,17 +759,8 @@ def run_download(job_id: str, url: str, quality: str) -> None:
 def recover_interrupted_jobs() -> int:
     """Mark jobs left active by a process restart as failed and remove their partial files."""
     rows = JOB_REPOSITORY.recover_interrupted()
-    root = DOWNLOAD_ROOT.resolve()
     for row in rows:
-        raw_dir = row["job_dir"]
-        if not raw_dir:
-            continue
-        try:
-            job_dir = Path(raw_dir).resolve()
-            if job_dir.parent == root and job_dir.name.startswith("drift-") and job_dir.is_dir():
-                shutil.rmtree(job_dir, ignore_errors=True)
-        except (OSError, RuntimeError):
-            continue
+        MEDIA_STORAGE.remove_interrupted(row.get("job_dir"))
     return len(rows)
 
 
@@ -746,12 +768,7 @@ def cleanup_once() -> None:
     cutoff = now() - JOB_TTL_SECONDS
     cleanup = JOB_REPOSITORY.expired_jobs(cutoff)
     tracked = {Path(path).name for path in cleanup["tracked"] if path}
-    for directory in DOWNLOAD_ROOT.iterdir():
-        try:
-            if directory.name in tracked: continue
-            if directory.is_dir() and directory.name.startswith("drift-") and directory.stat().st_mtime < cutoff:
-                shutil.rmtree(directory, ignore_errors=True)
-        except FileNotFoundError: pass
+    MEDIA_STORAGE.cleanup_stale(tracked, cutoff)
 
 
 def cleanup_loop() -> None:
@@ -899,10 +916,10 @@ class Handler(BaseHTTPRequestHandler):
         if job["status"] != "ready" or not job.get("file_path"):
             return self.send_json({"success":False,"message":"The file is not ready yet."},409)
         path = Path(job["file_path"])
-        if not path.is_file():
+        if not MEDIA_STORAGE.is_file(path):
             update_job(job_id, status="failed", phase="Failed", error="The temporary file is no longer available.", message="The file is no longer available.")
             return self.send_json({"success":False,"message":"The temporary file is no longer available."},410)
-        size = path.stat().st_size
+        size = MEDIA_STORAGE.size(path)
         if size > MAX_DOWNLOAD_BYTES: return self.send_json({"success":False,"message":"The file exceeds Drift's size limit."},413)
         range_header = self.headers.get("Range")
         start, end, status = 0, size - 1, 200
@@ -930,7 +947,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_cors(); self.end_headers()
         try:
-            with path.open("rb") as f:
+            with MEDIA_STORAGE.open_file(path) as f:
                 f.seek(start); remaining = length
                 while remaining:
                     chunk = f.read(min(1024*1024, remaining))
