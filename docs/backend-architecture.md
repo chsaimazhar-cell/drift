@@ -21,10 +21,11 @@ Keep the downloader and HTTP API independent from infrastructure by introducing 
 
 1. **JobRepository** — create a job, fetch a job, make conditional status updates, claim work atomically, list expired jobs, and record completion/failure. Production implementation must use a shared managed database and migrations.
 2. **JobQueue** — enqueue a job ID, claim it with a lease, acknowledge completion, retry transient failures, and recover expired leases. Production implementation must be durable; an in-memory queue is development-only.
-3. **MediaStorage** — create a private per-job workspace, store the finished media, stream or issue a short-lived authorized download, and delete expired objects. Production implementation must use private object storage; never expose public bucket URLs.
-4. **AbuseControls** — enforce shared per-client and global limits, queue capacity, concurrency ceilings, and an operator kill switch. Limits must be shared across all API instances.
+3. **LocalWorkspaceStorage** — provide temporary local workspaces for yt-dlp and FFmpeg processing. The current `LocalMediaStorage` is this development adapter; it is not durable storage.
+4. **PrivateMediaObjectStore** — upload completed artifacts, return a provider-neutral object reference, issue short-lived object-scoped download URLs only after job authorization, delete objects, and enforce retention cleanup. Its provider contract is now defined and tested with a fake adapter; no real provider implementation exists. Buckets must remain private and public object URLs are prohibited.
+5. **AbuseControls** — enforce shared per-client and global limits, queue capacity, concurrency ceilings, and an operator kill switch. Limits must be shared across all API instances.
 
-The HTTP layer should validate requests and call application services. The downloader worker should receive a job ID, load its job, download into a private workspace, finalize the MP4, store the result, and update job state. It should not know which database, queue, object store, or hosting vendor is in use.
+The HTTP layer should validate requests and call application services. The downloader worker should receive a job ID, load its job, download into a private local workspace, finalize the MP4, upload it through `PrivateMediaObjectStore`, persist only the returned object reference, and update job state. It should not know which database, queue, object store, or hosting vendor is in use.
 
 ## Required production request flow
 
@@ -33,8 +34,8 @@ The HTTP layer should validate requests and call application services. The downl
 3. API creates a job record and durably enqueues its ID. If enqueueing fails, the API must safely mark/reconcile the job rather than leave a phantom queued job.
 4. A worker claims the job using a renewable lease and a bounded concurrency slot.
 5. The worker downloads and converts media in an isolated, resource-limited environment.
-6. The worker writes the completed file to private object storage and atomically marks the job ready.
-7. Browser polls job status. The download endpoint authorizes access to that job and streams the object or issues a short-lived signed URL.
+6. The worker uploads the completed file through the private object-store contract, persists its object key and metadata, and atomically marks the job ready.
+7. Browser polls job status. The download endpoint authorizes access to that job and then issues a short-lived, object-scoped signed URL (or streams the object). Signed URLs must not be stored in job records or logs.
 8. A scheduled cleanup process deletes expired objects and corresponding job records. Failed/abandoned jobs and partial workspaces also have retention limits.
 
 Job IDs must remain high entropy and be treated as bearer capabilities unless a separate authorization design is introduced. Do not log job IDs, signed URLs, source URLs containing credentials, or provider tokens.
@@ -65,11 +66,13 @@ Job IDs must remain high entropy and be treated as bearer capabilities unless a 
 - [x] Add focused tests for job-ID dispatch and rejection of unknown jobs.
 - [x] Add repository-level atomic claim, lease renewal, terminal acknowledgement, bounded retry scheduling, and expired-lease recovery primitives with SQLite contract tests.
 - [x] Wire the local worker adapter to claim jobs before execution, renew leases during long downloads, acknowledge terminal jobs, and release failed worker attempts for retry. This remains an in-process development queue; it is not a durable broker or multi-instance production worker.
+- [x] Define a provider-neutral private object-store contract for completed-file upload, short-lived signed download URLs, object deletion, and retention cleanup; verify the contract with a fake adapter. No cloud provider is implemented or connected.
 - Preserve the current frontend and all public endpoints.
 - Do not add a second API server or worker until the interfaces and lifecycle tests are in place.
 
 ### Phase B — production adapters (requires provider and budget approval)
 - Select managed SQL, durable queue, private object storage, and a worker-capable host.
+- Implement and integration-test a real private object-store adapter, including signed URL expiry, object-scoped permissions, range downloads, retention cleanup, and failure handling.
 - Implement provider adapters and database migrations.
 - Add atomic job claiming, lease renewal, retry policy, idempotency, and orphan reconciliation.
 - Add signed-download authorization and scheduled object cleanup.
