@@ -68,6 +68,7 @@ Job IDs must remain high entropy and be treated as bearer capabilities unless a 
 - [x] Wire the local worker adapter to claim jobs before execution, renew leases during long downloads, acknowledge terminal jobs, and release failed worker attempts for retry. This remains an in-process development queue; it is not a durable broker or multi-instance production worker.
 - [x] Define a provider-neutral private object-store contract for completed-file upload, short-lived signed download URLs, object deletion, and retention cleanup; verify the contract with a fake adapter. No cloud provider is implemented or connected.
 - [x] Add a versioned SQLite migration for object-storage metadata (`storage_backend`, `object_key`, content type, size, and expiry), with persistence/default tests. Existing jobs remain local-file-backed; the fields are groundwork only and do not activate cloud storage.
+- [x] Wire the optional private-store adapter into the worker and authorized file endpoint: completed files can be uploaded, job metadata stores only the object reference, file responses preserve byte-range streaming and attachment headers, and expired job objects are deleted. This path remains inactive until a real adapter is configured and integration-tested.
 - Preserve the current frontend and all public endpoints.
 - Do not add a second API server or worker until the interfaces and lifecycle tests are in place.
 
