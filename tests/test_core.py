@@ -165,6 +165,38 @@ class DriftHelperTests(unittest.TestCase):
     def test_error_messages_are_sanitized(self):
         self.assertIn("403/429", drift.clean_error(RuntimeError("HTTP Error 429")))
 
+    def test_cors_only_allows_configured_origin(self):
+        class FakeHandler:
+            headers = {"Origin": "https://attacker.example"}
+            sent = []
+            def send_header(self, key, value):
+                self.sent.append((key, value))
+
+        handler = FakeHandler()
+        with patch.dict(os.environ, {"DRIFT_ALLOWED_ORIGIN": "https://drift.example"}):
+            drift.Handler.send_cors(handler)
+        self.assertNotIn(("Access-Control-Allow-Origin", "https://drift.example"), handler.sent)
+        self.assertIn(("Vary", "Origin"), handler.sent)
+
+        handler.sent = []
+        handler.headers = {"Origin": "https://drift.example"}
+        with patch.dict(os.environ, {"DRIFT_ALLOWED_ORIGIN": "https://drift.example"}):
+            drift.Handler.send_cors(handler)
+        self.assertIn(("Access-Control-Allow-Origin", "https://drift.example"), handler.sent)
+
+    def test_cors_wildcard_is_explicit_and_not_reflected(self):
+        class FakeHandler:
+            headers = {"Origin": "https://any.example"}
+            sent = []
+            def send_header(self, key, value):
+                self.sent.append((key, value))
+
+        handler = FakeHandler()
+        with patch.dict(os.environ, {"DRIFT_ALLOWED_ORIGIN": "*"}):
+            drift.Handler.send_cors(handler)
+        self.assertIn(("Access-Control-Allow-Origin", "*"), handler.sent)
+        self.assertNotIn(("Access-Control-Allow-Origin", "https://any.example"), handler.sent)
+
     def test_client_ip_ignores_forwarded_header_by_default(self):
         class FakeHandler:
             client_address = ("203.0.113.10", 12345)
