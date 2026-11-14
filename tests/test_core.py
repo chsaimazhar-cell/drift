@@ -48,6 +48,14 @@ class DriftHelperTests(unittest.TestCase):
     def test_rejects_url_credentials(self):
         self.assertFalse(drift.validate_public_url("https://user:pass@youtube.com/watch?v=x")[0])
 
+    def test_rejects_nonstandard_source_ports(self):
+        self.assertFalse(drift.validate_public_url("https://youtube.com:8080/watch?v=x")[0])
+        self.assertFalse(drift.validate_public_url("http://youtube.com:8443/watch?v=x")[0])
+        self.assertFalse(drift.validate_public_url("https://youtube.com:invalid/watch?v=x")[0])
+
+    def test_rejects_control_characters_in_source_urls(self):
+        self.assertFalse(drift.validate_public_url("https://youtube.com/\nwatch?v=x")[0])
+
     def test_rejects_supported_host_resolving_to_private_ip(self):
         private_dns = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 443))]
         with patch.object(drift.socket, "getaddrinfo", return_value=private_dns):
