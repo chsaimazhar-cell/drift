@@ -644,14 +644,22 @@ class Handler(BaseHTTPRequestHandler):
 
     def send_cors(self):
         origin = self.headers.get("Origin")
-        allowed = os.getenv("DRIFT_ALLOWED_ORIGIN", "*")
-        if allowed == "*" or origin == allowed:
-            self.send_header("Access-Control-Allow-Origin", allowed if allowed != "*" else "*")
+        allowed = os.getenv("DRIFT_ALLOWED_ORIGIN", "*").strip()
+        if allowed == "*" and origin:
+            self.send_header("Access-Control-Allow-Origin", "*")
+        elif origin and allowed and origin == allowed:
+            self.send_header("Access-Control-Allow-Origin", allowed)
         self.send_header("Vary", "Origin")
 
     def do_OPTIONS(self):
+        origin = self.headers.get("Origin")
+        allowed = os.getenv("DRIFT_ALLOWED_ORIGIN", "*").strip()
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", os.getenv("DRIFT_ALLOWED_ORIGIN", "*"))
+        if allowed == "*" and origin:
+            self.send_header("Access-Control-Allow-Origin", "*")
+        elif origin and allowed and origin == allowed:
+            self.send_header("Access-Control-Allow-Origin", allowed)
+        self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept")
         self.send_header("Access-Control-Max-Age", "600")
