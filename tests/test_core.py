@@ -316,7 +316,9 @@ class DriftHelperTests(unittest.TestCase):
                 }
                 drift.JOB_REPOSITORY.insert(dict(base, id="repo-active"))
                 self.assertEqual(drift.JOB_REPOSITORY.active_count(), 1)
-                drift.JOB_REPOSITORY.cancel_active("repo-active")
+                self.assertTrue(drift.JOB_REPOSITORY.cancel_active("repo-active"))
+                self.assertFalse(drift.JOB_REPOSITORY.cancel_active("repo-active"))
+                self.assertFalse(drift.JOB_REPOSITORY.cancel_active("missing-job"))
                 self.assertEqual(drift.get_job("repo-active")["status"], "cancelled")
                 drift.update_job("repo-active", status="failed", updated_at=1)
                 expired = drift.JOB_REPOSITORY.expired_jobs(2_000_000_000)
