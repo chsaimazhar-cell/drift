@@ -122,6 +122,27 @@ class DriftHelperTests(unittest.TestCase):
                 self.assertEqual(stored["status"], "failed")
                 self.assertIn("restarted", stored["message"])
 
+    def test_sqlite_repository_lifecycle_operations(self):
+        with tempfile.TemporaryDirectory() as temp:
+            database = Path(temp) / "jobs.sqlite3"
+            with patch.object(drift, "DB_PATH", database):
+                drift.init_db()
+                base = {
+                    "status": "queued", "phase": "Queued", "progress": 0,
+                    "downloaded_bytes": 0, "total_bytes": 0, "url": "https://youtube.com/watch?v=x",
+                    "quality": "best", "format": "MP4", "platform": "YouTube",
+                    "created_at": drift.now(), "updated_at": drift.now(),
+                }
+                drift.JOB_REPOSITORY.insert(dict(base, id="repo-active"))
+                self.assertEqual(drift.JOB_REPOSITORY.active_count(), 1)
+                drift.JOB_REPOSITORY.cancel_active("repo-active")
+                self.assertEqual(drift.get_job("repo-active")["status"], "cancelled")
+                drift.update_job("repo-active", status="failed", updated_at=1)
+                expired = drift.JOB_REPOSITORY.expired_jobs(drift.now() - 10)
+                self.assertEqual([job["id"] for job in expired["expired"]], ["repo-active"])
+                self.assertIsNone(drift.get_job("repo-active"))
+                self.assertEqual(expired["tracked"], [])
+
     def test_media_probe_has_a_hard_timeout(self):
         timeout = subprocess.TimeoutExpired(cmd="ffmpeg", timeout=30)
         with patch.object(drift, "find_ffmpeg", return_value="ffmpeg"), patch.object(
