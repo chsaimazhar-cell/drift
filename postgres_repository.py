@@ -156,8 +156,8 @@ class PostgresJobRepository:
     def mark_ready_owned(self, job_id, lease_owner, updates):
         """Commit readiness only if the completing worker still owns the active lease."""
         values = {key: value for key, value in updates.items() if key in self.MUTABLE_COLUMNS}
-        values.update(status="ready", updated_at=__import__("time").time(),
-                      lease_owner=None, lease_expires_at=None)
+        # Keep the lease owner until PostgresWorker acknowledges the terminal job.
+        values.update(status="ready", updated_at=__import__("time").time())
         assignments, params = [], []
         for key, value in values.items():
             assignments.append(f"{key}={self._timestamp_expr(key)}")
