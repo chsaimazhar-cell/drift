@@ -9,6 +9,7 @@ import json
 import threading
 import uuid
 from urllib.request import urlopen
+from urllib.error import HTTPError
 import tempfile
 import unittest
 from pathlib import Path
@@ -679,6 +680,19 @@ class DriftHelperTests(unittest.TestCase):
                         self.assertEqual(response.read(), b"45678")
                         self.assertEqual(response.headers.get("Content-Range"), "bytes 4-8/16")
                         self.assertIn("attachment", response.headers.get("Content-Disposition"))
+
+                    # An object-backed job must fail closed when storage is not configured.
+                    with patch.object(drift, "PRIVATE_MEDIA_STORE", None):
+                        with self.assertRaises(HTTPError) as unavailable:
+                            urlopen(object_url, timeout=5)
+                        self.assertEqual(unavailable.exception.code, 503)
+
+                    # Expired object references must never be streamed.
+                    drift.update_job(object_job["id"], object_expires_at=drift.now() - 1)
+                    with patch.object(drift, "PRIVATE_MEDIA_STORE", FakeObjectStore()):
+                        with self.assertRaises(HTTPError) as expired:
+                            urlopen(object_url, timeout=5)
+                        self.assertEqual(expired.exception.code, 410)
             finally:
                 server.shutdown()
                 server.server_close()
