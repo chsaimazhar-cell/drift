@@ -198,7 +198,7 @@ class PostgresJobRepository:
         if max_attempts < 1:
             raise ValueError("Attempt limit must be positive.")
         rows = self._execute(
-            "SELECT id, status, attempts FROM drift_jobs "
+            "SELECT id, status, attempts, job_dir FROM drift_jobs "
             "WHERE status IN ('queued','downloading','processing') ORDER BY created_at",
             fetchall=True,
         )
@@ -209,6 +209,7 @@ class PostgresJobRepository:
                     "UPDATE drift_jobs SET lease_owner=NULL, lease_expires_at=NULL "
                     "WHERE id=%s AND status='queued'", (row["id"],)
                 )
+                recovered.append(row)
                 continue
             retryable = int(row["attempts"]) < max_attempts
             self._execute(
