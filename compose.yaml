@@ -36,6 +36,12 @@ services:
       timeout: 5s
       start_period: 60s
       retries: 3
+    # Keep the container filesystem immutable; only bounded scratch and /data are writable.
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m,mode=1777
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
 
