@@ -147,38 +147,62 @@ class SQLiteJobRepository:
     adapter before running multiple API or worker instances.
     """
 
+    SCHEMA_VERSION = 1
+
+    @staticmethod
+    def _migration_1(conn: sqlite3.Connection) -> None:
+        """Create the baseline jobs schema and indexes without replacing existing data."""
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS jobs (
+                id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                progress REAL,
+                downloaded_bytes INTEGER NOT NULL DEFAULT 0,
+                total_bytes INTEGER NOT NULL DEFAULT 0,
+                speed REAL,
+                eta REAL,
+                url TEXT NOT NULL,
+                quality TEXT NOT NULL,
+                format TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                title TEXT,
+                thumbnail TEXT,
+                filename TEXT,
+                file_size INTEGER NOT NULL DEFAULT 0,
+                message TEXT,
+                error TEXT,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                completed_at REAL,
+                job_dir TEXT,
+                file_path TEXT,
+                duration TEXT
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_updated ON jobs(updated_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)")
+
+    MIGRATIONS = ((1, _migration_1.__func__),)
+
     def initialize(self) -> None:
+        """Apply versioned, transactional schema migrations, then recover interrupted work."""
         with DB_LOCK, db() as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS jobs (
-                    id TEXT PRIMARY KEY,
-                    status TEXT NOT NULL,
-                    phase TEXT NOT NULL,
-                    progress REAL,
-                    downloaded_bytes INTEGER NOT NULL DEFAULT 0,
-                    total_bytes INTEGER NOT NULL DEFAULT 0,
-                    speed REAL,
-                    eta REAL,
-                    url TEXT NOT NULL,
-                    quality TEXT NOT NULL,
-                    format TEXT NOT NULL,
-                    platform TEXT NOT NULL,
-                    title TEXT,
-                    thumbnail TEXT,
-                    filename TEXT,
-                    file_size INTEGER NOT NULL DEFAULT 0,
-                    message TEXT,
-                    error TEXT,
-                    created_at REAL NOT NULL,
-                    updated_at REAL NOT NULL,
-                    completed_at REAL,
-                    job_dir TEXT,
-                    file_path TEXT,
-                    duration TEXT
+            current_version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if current_version > self.SCHEMA_VERSION:
+                raise RuntimeError(
+                    f"Database schema version {current_version} is newer than this Drift backend supports."
                 )
-            """)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_updated ON jobs(updated_at)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)")
+
+            for version, migration in self.MIGRATIONS:
+                if version <= current_version:
+                    continue
+                conn.execute("BEGIN IMMEDIATE")
+                migration(conn)
+                conn.execute(f"PRAGMA user_version = {int(version)}")
+                conn.commit()
+                current_version = version
+
             conn.execute("""
                 UPDATE jobs
                 SET status='failed', phase='Failed', error='Backend restarted while this download was running.',
