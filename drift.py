@@ -983,7 +983,6 @@ def find_media(job_dir: Path) -> Path | None:
 
 def probe_media(media: Path) -> dict:
     """Read codecs with `ffmpeg -i` (works without ffprobe)."""
-    check_worker_lease(lease_lost_event)
     ffmpeg = find_ffmpeg()
     if not ffmpeg:
         raise RuntimeError("FFmpeg is not available. Install FFmpeg or the imageio-ffmpeg package, then restart Drift.")
