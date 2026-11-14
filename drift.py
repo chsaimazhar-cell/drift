@@ -194,7 +194,7 @@ class SQLiteJobRepository:
     adapter before running multiple API or worker instances.
     """
 
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     @staticmethod
     def _migration_1(conn: sqlite3.Connection) -> None:
@@ -252,9 +252,29 @@ class SQLiteJobRepository:
             "ON jobs(status, lease_expires_at)"
         )
 
+    @staticmethod
+    def _migration_3(conn: sqlite3.Connection) -> None:
+        """Add provider-neutral metadata for private object storage."""
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}
+        additions = (
+            ("storage_backend", "TEXT NOT NULL DEFAULT 'local'"),
+            ("object_key", "TEXT"),
+            ("object_content_type", "TEXT"),
+            ("object_size", "INTEGER"),
+            ("object_expires_at", "REAL"),
+        )
+        for column, definition in additions:
+            if column not in existing:
+                conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} {definition}")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_jobs_object_expiry "
+            "ON jobs(storage_backend, object_expires_at)"
+        )
+
     MIGRATIONS = (
         (1, _migration_1.__func__),
         (2, _migration_2.__func__),
+        (3, _migration_3.__func__),
     )
 
     def initialize(self) -> None:
@@ -1254,7 +1274,9 @@ class Handler(BaseHTTPRequestHandler):
              "speed":None,"eta":None,"url":url,"quality":quality,"format":"MP4","platform":detect_platform(url),
              "title":str(body.get("title") or "Preparing media…")[:300],"thumbnail":str(body.get("thumbnail") or "")[:2000],
              "filename":None,"file_size":0,"message":"Your download is queued.","error":None,"created_at":t,"updated_at":t,
-             "completed_at":None,"job_dir":None,"file_path":None,"duration":str(body.get("duration") or "")[:100]}
+             "completed_at":None,"job_dir":None,"file_path":None,"storage_backend":"local",
+             "object_key":None,"object_content_type":None,"object_size":None,"object_expires_at":None,
+             "duration":str(body.get("duration") or "")[:100]}
         if not insert_job_if_capacity(job):
             CANCEL_EVENTS.pop(job_id, None)
             return self.send_json({"success":False,"message":"Drift is at its current capacity. Please wait for a download to finish or for temporary files to expire."},429)
