@@ -15,10 +15,11 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
+from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Generator
+from typing import Generator, Protocol, runtime_checkable
 from urllib.parse import quote, unquote, urlparse
 
 # Dependencies are installed explicitly from requirements.txt. Never run pip during import.
@@ -723,6 +724,38 @@ class DownloadTooLarge(Exception): pass
 
 
 MEDIA_SUFFIXES = {".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi", ".flv", ".3gp", ".ts"}
+
+
+@dataclass(frozen=True)
+class StoredMediaObject:
+    """Provider-neutral reference to a private, completed media object."""
+    object_key: str
+    size_bytes: int
+    content_type: str
+    filename: str
+
+
+@runtime_checkable
+class PrivateMediaObjectStore(Protocol):
+    """Contract for durable private object storage; implementations must never make objects public."""
+
+    def put_file(
+        self, source: Path, object_key: str, content_type: str, filename: str
+    ) -> StoredMediaObject:
+        """Upload a completed local artifact and return its canonical private object reference."""
+        ...
+
+    def create_download_url(self, object_key: str, expires_in_seconds: int) -> str:
+        """Return a short-lived, object-scoped download URL after authorization."""
+        ...
+
+    def delete_object(self, object_key: str) -> None:
+        """Delete one private object; missing objects should be treated as already deleted."""
+        ...
+
+    def delete_expired_objects(self, cutoff_timestamp: float) -> int:
+        """Delete objects whose retention deadline has passed and return the deleted count."""
+        ...
 
 
 class LocalMediaStorage:
