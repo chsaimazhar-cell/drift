@@ -130,3 +130,12 @@ docker run --rm -p 5000:5000 -v drift-data:/data drift-backend
 Then check `http://localhost:5000/api/health`. The named Docker volume keeps the SQLite database and completed download files across container replacement. A production host must provide a persistent volume mounted at `/data`; without it, local job history and files can be lost.
 
 The container runs as a non-root user, installs FFmpeg, and includes an HTTP health check. Do not expose this single-instance container to unrestricted worldwide traffic yet. Before production, replace or externalize the local queue/database/file store, add shared abuse controls and outbound-network protections, and verify provider-level spending limits. A Vercel frontend can be connected later through a configured backend origin once a suitable backend host has been selected.
+
+
+## Vercel frontend configuration (backend required)
+
+Vercel is configured to build and publish only the static frontend from `public/`. The build runs `npm run build`, which generates `public/runtime-config.js` from the `DRIFT_API_BASE_URL` environment variable. Set this variable in the Vercel project to the HTTPS base URL of the separately hosted Drift backend (for example, `https://api.example.com`). The build intentionally fails if this value is missing or invalid, so a Vercel deployment cannot silently publish a frontend that points to a nonexistent same-origin API.
+
+Use the `public-deployment` branch, root directory `./`, Framework Preset `Other`, Build Command `npm run build`, and Output Directory `public`. Do not deploy until a working backend URL exists and the backend CORS allow-origin is set to the exact Vercel site origin. The frontend uses `window.API_BASE` to call the backend; no visitor account is needed.
+
+The example API URL above is illustrative only. Do not enter it as a real production setting.
