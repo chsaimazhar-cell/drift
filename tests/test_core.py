@@ -835,7 +835,8 @@ class DriftHelperTests(unittest.TestCase):
         completed = threading.Event()
         job = {"id": "queue-contract-test", "url": "https://www.youtube.com/watch?v=test", "quality": "720p"}
         with patch.object(drift, "JOB_REPOSITORY") as repository, patch.object(drift, "run_download") as worker:
-            repository.get.return_value = job
+            repository.get.side_effect = [job, dict(job, status="ready")]
+            repository.claim_job.return_value = job
             try:
                 future = queue.enqueue(job["id"])
                 future.result(timeout=2)
