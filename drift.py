@@ -197,8 +197,7 @@ class LocalThreadPoolJobQueue:
         self.executor.shutdown(wait=wait, cancel_futures=cancel_pending)
 
 
-# Replace with a durable queue adapter before running multiple API/worker instances.
-JOB_QUEUE = LocalThreadPoolJobQueue(MAX_ACTIVE_JOBS)
+# The queue is initialized after the repository adapter is defined below.
 RATE_LOCK = threading.Lock()
 RATE_WINDOWS: dict[str, list[float]] = {}
 
@@ -687,6 +686,10 @@ class SQLiteJobRepository:
 # The current adapter is intentionally local-only. A managed database adapter
 # can replace this object without changing the HTTP handlers or downloader.
 JOB_REPOSITORY: JobRepository = SQLiteJobRepository()
+
+
+# Replace with a durable queue adapter before running multiple API/worker instances.
+JOB_QUEUE = LocalThreadPoolJobQueue(MAX_ACTIVE_JOBS)
 
 
 def _active_job_repository() -> JobRepository:
