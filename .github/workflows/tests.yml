@@ -32,5 +32,9 @@ jobs:
         env:
           DRIFT_API_BASE_URL: https://backend.example.invalid
         run: npm run build
+      - name: Validate deployment Compose configuration
+        env:
+          DRIFT_ALLOWED_ORIGIN: https://drift.example.invalid
+        run: docker compose config --quiet
       - name: Build backend container
         run: docker build --tag drift-backend:ci .
