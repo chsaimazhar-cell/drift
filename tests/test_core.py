@@ -577,7 +577,7 @@ class DriftHelperTests(unittest.TestCase):
             root = Path(temp)
             storage = drift.LocalMediaStorage(root)
             workspace = storage.create_workspace("find-media-fallback")
-            partial = workspace / "video.mp4.part"
+            partial = workspace / "video.f137.mp4"
             partial.write_bytes(b"partial")
             self.assertEqual(storage.find_media(workspace), partial)
 
