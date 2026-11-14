@@ -1005,6 +1005,44 @@ class DriftHelperTests(unittest.TestCase):
                 )
                 self.assertEqual(drift.get_job("exhausted-job")["status"], "failed")
 
+    def test_repository_lists_only_due_queued_jobs_in_schedule_order(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(drift, "DB_PATH", Path(temp) / "due.sqlite3"):
+                drift.init_db()
+                base = {
+                    "status": "queued", "phase": "Queued",
+                    "url": "https://youtube.com/watch?v=due", "quality": "best",
+                    "format": "MP4", "platform": "YouTube",
+                    "created_at": 1, "updated_at": 1,
+                }
+                drift.JOB_REPOSITORY.insert(dict(base, id="later", available_at=30))
+                drift.JOB_REPOSITORY.insert(dict(base, id="ready-now", available_at=10))
+                drift.JOB_REPOSITORY.insert(dict(base, id="already-due", available_at=5))
+                drift.JOB_REPOSITORY.insert(dict(base, id="running", status="downloading", available_at=1))
+                self.assertEqual(
+                    drift.JOB_REPOSITORY.list_due_jobs(limit=2, timestamp=20),
+                    [{"id": "already-due"}, {"id": "ready-now"}],
+                )
+                self.assertEqual(drift.JOB_REPOSITORY.list_due_jobs(timestamp=4), [])
+
+    def test_local_dispatcher_submits_due_job_and_avoids_duplicate_in_flight(self):
+        queue = drift.LocalThreadPoolJobQueue(max_workers=1)
+        job = {"id": "due-retry", "url": "https://youtube.com/watch?v=due", "quality": "best"}
+        with patch.object(drift, "JOB_REPOSITORY") as repository, patch.object(
+            drift, "run_download"
+        ):
+            repository.list_due_jobs.return_value = [{"id": job["id"]}]
+            repository.claim_job.return_value = None
+            try:
+                self.assertEqual(queue.dispatch_due_jobs(), 1)
+                self.assertEqual(queue.dispatch_due_jobs(), 0)
+                deadline = time.monotonic() + 2
+                while queue._in_flight and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                repository.claim_job.assert_called_once()
+            finally:
+                queue.shutdown(wait=True, cancel_pending=True)
+
     def test_run_download_propagates_transient_setup_failure_for_queue_retry(self):
         with patch.object(drift, "MEDIA_STORAGE") as storage, patch.object(
             drift, "update_job"
