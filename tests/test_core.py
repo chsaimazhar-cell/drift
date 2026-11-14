@@ -106,7 +106,7 @@ class DriftHelperTests(unittest.TestCase):
             (partial / "partial.mp4").write_bytes(b"partial")
             with patch.object(drift, "DB_PATH", database), patch.object(
                 drift, "DOWNLOAD_ROOT", root
-            ):
+            ), patch.object(drift, "MEDIA_STORAGE", drift.LocalMediaStorage(root)):
                 drift.init_db()
                 job = {
                     "id": "interrupted-job", "status": "downloading", "phase": "Downloading",
