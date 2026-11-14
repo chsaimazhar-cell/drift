@@ -54,7 +54,8 @@ Job IDs must remain high entropy and be treated as bearer capabilities unless a 
 ## Provider-neutral migration sequence
 
 ### Phase A — safe refactor in this repository
-- Extract current SQLite job operations behind a repository interface without changing API response shapes.
+- [x] Extract core SQLite job reads, updates, inserts, conditional ready transition, and local capacity reservation behind a `SQLiteJobRepository` adapter without changing API response shapes. This remains a local single-process adapter, not a shared production database.
+- [ ] Move remaining direct SQL lifecycle operations behind the repository contract and add explicit repository contract tests.
 - Extract local filesystem operations behind a storage interface.
 - Extract enqueue/claim operations behind a queue interface; keep the current single-process implementation explicitly marked development-only.
 - Add contract tests that run against the local adapters.
