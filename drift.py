@@ -771,6 +771,10 @@ class PrivateMediaObjectStore(Protocol):
         """Return a short-lived, object-scoped download URL after authorization."""
         ...
 
+    def open_file_range(self, object_key: str, start: int, end: int) -> BinaryIO:
+        """Open exactly the requested byte range from a private object."""
+        ...
+
     def delete_object(self, object_key: str) -> None:
         """Delete one private object; missing objects should be treated as already deleted."""
         ...
@@ -811,6 +815,8 @@ class LocalMediaStorage:
             except FileNotFoundError: pass
 
 MEDIA_STORAGE = LocalMediaStorage(DOWNLOAD_ROOT)
+# Optional provider adapter. None keeps the existing local-disk behavior.
+PRIVATE_MEDIA_STORE: PrivateMediaObjectStore | None = None
 
 @functools.lru_cache(maxsize=1)
 def find_ffmpeg() -> str | None:
@@ -1002,9 +1008,33 @@ def run_download(job_id: str, url: str, quality: str) -> None:
         final_name = safe_filename(title)
         final_path = job_dir / final_name
         MEDIA_STORAGE.finalize(media, final_path)
-        if not mark_job_ready(job_id, phase="Ready", progress=100, title=title,
-                              duration=duration, filename=final_name, file_path=str(final_path),
-                              file_size=size, message="Your MP4 is ready to save.", completed_at=now()):
+        if PRIVATE_MEDIA_STORE is None:
+            ready_updates = {
+                "phase": "Ready", "progress": 100, "title": title, "duration": duration,
+                "filename": final_name, "file_path": str(final_path), "file_size": size,
+                "storage_backend": "local", "object_key": None, "object_content_type": None,
+                "object_size": None, "object_expires_at": None,
+                "message": "Your MP4 is ready to save.", "completed_at": now(),
+            }
+            if not mark_job_ready(job_id, **ready_updates):
+                MEDIA_STORAGE.delete_workspace(job_dir)
+        else:
+            object_key = f"jobs/{job_id}/{uuid.uuid4().hex}.mp4"
+            stored = PRIVATE_MEDIA_STORE.put_file(final_path, object_key, "video/mp4", final_name)
+            if stored.object_key != object_key or stored.size_bytes != size or stored.content_type != "video/mp4":
+                PRIVATE_MEDIA_STORE.delete_object(object_key)
+                raise RuntimeError("Private storage returned inconsistent media metadata.")
+            expires_at = now() + JOB_TTL_SECONDS
+            ready_updates = {
+                "phase": "Ready", "progress": 100, "title": title, "duration": duration,
+                "filename": final_name, "file_path": None, "file_size": size,
+                "storage_backend": "object", "object_key": stored.object_key,
+                "object_content_type": stored.content_type, "object_size": stored.size_bytes,
+                "object_expires_at": expires_at,
+                "message": "Your MP4 is ready to save.", "completed_at": now(),
+            }
+            if not mark_job_ready(job_id, **ready_updates):
+                PRIVATE_MEDIA_STORE.delete_object(stored.object_key)
             MEDIA_STORAGE.delete_workspace(job_dir)
     except DownloadCancelled:
         update_job(job_id, status="cancelled", phase="Cancelled", message="Download cancelled.")
@@ -1186,14 +1216,27 @@ class Handler(BaseHTTPRequestHandler):
     def stream_file(self, job_id):
         job = get_job(job_id)
         if not job: return self.send_json({"success":False,"message":"Download job not found or expired."},404)
-        if job["status"] != "ready" or not job.get("file_path"):
+        backend = job.get("storage_backend") or "local"
+        object_key = job.get("object_key")
+        path = None
+        if job["status"] != "ready":
             return self.send_json({"success":False,"message":"The file is not ready yet."},409)
-        path = Path(job["file_path"])
-        if not MEDIA_STORAGE.is_file(path):
-            update_job(job_id, status="failed", phase="Failed", error="The temporary file is no longer available.", message="The file is no longer available.")
-            return self.send_json({"success":False,"message":"The temporary file is no longer available."},410)
-        size = MEDIA_STORAGE.size(path)
-        if size > MAX_DOWNLOAD_BYTES: return self.send_json({"success":False,"message":"The file exceeds Drift's size limit."},413)
+        if backend == "object":
+            if not PRIVATE_MEDIA_STORE or not object_key or not isinstance(job.get("object_size"), int):
+                return self.send_json({"success":False,"message":"Private media storage is temporarily unavailable."},503)
+            if job.get("object_expires_at") is not None and job["object_expires_at"] <= now():
+                return self.send_json({"success":False,"message":"The temporary file has expired."},410)
+            size = job["object_size"]
+        elif backend == "local" and job.get("file_path"):
+            path = Path(job["file_path"])
+            if not MEDIA_STORAGE.is_file(path):
+                update_job(job_id, status="failed", phase="Failed", error="The temporary file is no longer available.", message="The temporary file is no longer available.")
+                return self.send_json({"success":False,"message":"The temporary file is no longer available."},410)
+            size = MEDIA_STORAGE.size(path)
+        else:
+            return self.send_json({"success":False,"message":"The file is not ready yet."},409)
+        if size < 1 or size > MAX_DOWNLOAD_BYTES:
+            return self.send_json({"success":False,"message":"The file exceeds Drift's size limit."},413)
         range_header = self.headers.get("Range")
         start, end, status = 0, size - 1, 200
         if range_header:
@@ -1220,12 +1263,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_cors(); self.end_headers()
         try:
-            with MEDIA_STORAGE.open_file(path) as f:
-                f.seek(start); remaining = length
+            stream = (PRIVATE_MEDIA_STORE.open_file_range(object_key, start, end)
+                      if backend == "object" else MEDIA_STORAGE.open_file(path))
+            with stream as f:
+                if backend == "local":
+                    f.seek(start)
+                remaining = length
                 while remaining:
                     chunk = f.read(min(1024*1024, remaining))
                     if not chunk: break
                     self.wfile.write(chunk); remaining -= len(chunk)
+                if remaining:
+                    raise OSError("Private media stream ended before the requested range was complete.")
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass  # browser closed the connection (e.g. user cancelled) - not an error
 
