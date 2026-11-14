@@ -95,7 +95,7 @@ No production migration, provider provisioning, database creation, object-storag
 - [x] Package the current single-instance backend in a non-root container with a health check.
 - [x] Add conservative single-instance Compose defaults and a persistent local volume.
 - [x] Bound HTTP handler concurrency, active/queued jobs, file size, local storage reservations, socket idle time, FFmpeg inspection, and FFmpeg conversion.
-- [x] Recover interrupted jobs safely after a process restart.
+- [x] Detect interrupted jobs and mark them failed after a process restart (single-instance fallback only; queued work is not resumed).
 - [x] Validate supported source hosts, reject credentials/control characters/non-standard ports, and reject non-global DNS answers at initial URL validation.
 - [x] Redact media URL query strings from downloader errors and job IDs/query strings from HTTP access logs.
 - [x] Default CORS to closed; a separately hosted frontend must configure the exact allowed origin explicitly.
@@ -104,7 +104,7 @@ No production migration, provider provisioning, database creation, object-storag
 
 ### Remaining implementation work (deployment blockers)
 
-The detailed infrastructure egress requirements are in [outbound-network-security-policy.md](outbound-network-security-policy.md). The staged test and release procedure is in [private-beta-verification-runbook.md](private-beta-verification-runbook.md). These documents are plans and test criteria, not evidence that a provider has enforced the controls.
+The detailed infrastructure egress requirements are in [outbound-network-security-policy.md](outbound-network-security-policy.md). The staged test and release procedure is in [private-beta-verification-runbook.md](private-beta-verification-runbook.md). The code-level findings from the latest backend review are in [backend-implementation-audit.md](backend-implementation-audit.md). These documents are plans and test criteria, not evidence that a provider has enforced the controls.
 
 - [ ] Enforce outbound network policy at the host/container network layer, including redirects and DNS rebinding. Application-level URL validation is not sufficient; follow the [outbound network security policy](outbound-network-security-policy.md).
 - [ ] Replace the in-process executor and cancellation map with a durable queue and independent worker lifecycle.
@@ -133,7 +133,7 @@ The GitHub Actions run for commit `91c60f6aac41bcc56aaaf1358f2a7c7ab90aaf83` com
 
 The branch now also includes bounded HTTP handler concurrency, FFmpeg probe and conversion timeouts, an HTTP idle-connection timeout, startup recovery for interrupted jobs, stricter URL port/control-character validation, and tests for these protections. The latest readiness-checklist commit passed CI; the backend architecture document is a design plan only and does not claim provider adapters are implemented.
 
-A passing CI run verifies the tested code and build steps; it does **not** establish production readiness. In particular, the DNS/redirect egress risk remains unresolved until the hosting network enforces outbound restrictions. The current app must not be exposed as an unrestricted public downloader. Keep it to controlled testing until the target backend, durable shared services, trusted proxy boundary, and network egress policy are implemented and verified.
+A passing CI run verifies the tested code and build steps; it does **not** establish production readiness. The latest static implementation audit also found that the current worker retry path is not end-to-end: ordinary download exceptions are converted to terminal failures inside `run_download()`, and the in-memory queue has no due-job dispatcher. See [backend-implementation-audit.md](backend-implementation-audit.md). In particular, the DNS/redirect egress risk remains unresolved until the hosting network enforces outbound restrictions. The current app must not be exposed as an unrestricted public downloader. Keep it to controlled testing until the target backend, durable shared services, trusted proxy boundary, and network egress policy are implemented and verified.
 
 
 ## Backend architecture plan
