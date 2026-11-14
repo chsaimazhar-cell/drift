@@ -98,6 +98,32 @@ class PostgresWorkerTests(unittest.TestCase):
         self.assertEqual(repo.acknowledged, [])
         self.assertEqual(repo.retries, [])
 
+    def test_shared_cancellation_is_detected_with_short_heartbeat(self):
+        repo = FakeRepository()
+        observed = []
+
+        def process(job):
+            # A shared cancellation clears the lease in PostgreSQL. The next
+            # heartbeat must expose that state so the downloader can stop.
+            repo.lose_lease = True
+            observed.append(job["_lease_lost_event"].wait(timeout=1))
+
+        worker = PostgresWorker(
+            repo, process, worker_id="worker-test",
+            lease_seconds=300, heartbeat_interval_seconds=0.01,
+        )
+        self.assertTrue(worker.run_once())
+        self.assertEqual(observed, [True])
+        self.assertEqual(repo.acknowledged, [])
+        self.assertEqual(repo.retries, [])
+
+    def test_heartbeat_interval_must_be_positive(self):
+        repo = FakeRepository()
+        with self.assertRaises(ValueError):
+            PostgresWorker(
+                repo, lambda _job: None, heartbeat_interval_seconds=0
+            )
+
     def test_returns_false_when_no_job_is_due(self):
         repo = FakeRepository()
         repo.claim_next_job = lambda *_args, **_kwargs: None
