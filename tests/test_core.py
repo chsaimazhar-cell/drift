@@ -61,6 +61,14 @@ class DriftHelperTests(unittest.TestCase):
         self.assertTrue(valid)
         self.assertEqual(parsed.hostname, "www.youtube.com")
 
+    def test_media_probe_has_a_hard_timeout(self):
+        timeout = subprocess.TimeoutExpired(cmd="ffmpeg", timeout=30)
+        with patch.object(drift, "find_ffmpeg", return_value="ffmpeg"), patch.object(
+            drift.subprocess, "run", side_effect=timeout
+        ):
+            with self.assertRaisesRegex(RuntimeError, "inspection took too long"):
+                drift.probe_media(Path("slow-media.mp4"))
+
     def test_quality_normalization_and_selector(self):
         self.assertEqual(drift.normalize_quality("720P"), "720p")
         self.assertEqual(drift.normalize_quality("9999p"), "best")
