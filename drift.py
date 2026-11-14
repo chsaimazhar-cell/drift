@@ -340,6 +340,18 @@ def rate_limit(handler: BaseHTTPRequestHandler, bucket: str, limit: int, window_
     key = f"{bucket}:{client_key(handler)}"
     cutoff = now() - window_seconds
     with RATE_LOCK:
+        # Bound memory use if many one-off client addresses hit the service.
+        if len(RATE_WINDOWS) > 10000:
+            stale_before = now() - 3600
+            for old_key in list(RATE_WINDOWS):
+                recent = [stamp for stamp in RATE_WINDOWS[old_key] if stamp > stale_before]
+                if recent:
+                    RATE_WINDOWS[old_key] = recent
+                else:
+                    RATE_WINDOWS.pop(old_key, None)
+            if len(RATE_WINDOWS) > 10000:
+                for old_key in list(RATE_WINDOWS)[:len(RATE_WINDOWS) - 10000]:
+                    RATE_WINDOWS.pop(old_key, None)
         timestamps = [t for t in RATE_WINDOWS.get(key, []) if t > cutoff]
         if len(timestamps) >= limit:
             RATE_WINDOWS[key] = timestamps
@@ -626,7 +638,8 @@ def json_bytes(data: dict) -> bytes:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "Drift/2.1"
+    server_version = "Drift"
+    sys_version = ""
 
     def log_message(self, fmt, *args):
         print(f"[{time.strftime('%H:%M:%S')}] {self.client_address[0]} {fmt % args}")
