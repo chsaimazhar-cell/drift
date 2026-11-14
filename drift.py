@@ -69,13 +69,23 @@ CANCEL_EVENTS: dict[str, threading.Event] = {}
 
 
 class LocalThreadPoolJobQueue:
-    """Development-only queue adapter; jobs are lost if this process stops."""
+    """Development-only SQLite queue with a single-process delayed-job dispatcher.
+
+    This adapter is not durable across process loss and must not be used with
+    multiple API/worker instances. Production requires a shared queue service.
+    """
 
     LEASE_SECONDS = 300
     MAX_ATTEMPTS = 3
+    DISPATCH_INTERVAL_SECONDS = 1
 
     def __init__(self, max_workers: int):
-        self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="drift-download")
+        self.max_workers = max(1, max_workers)
+        self.executor = ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="drift-download")
+        self._lock = threading.Lock()
+        self._in_flight: set[str] = set()
+        self._stop_dispatcher = threading.Event()
+        self._dispatcher: threading.Thread | None = None
 
     def _execute_claimed(self, job_id: str, worker_id: str) -> None:
         job = JOB_REPOSITORY.claim_job(job_id, worker_id, lease_seconds=self.LEASE_SECONDS)
@@ -93,8 +103,6 @@ class LocalThreadPoolJobQueue:
                     ):
                         return
                 except Exception:
-                    # A transient database issue must not spawn a second worker;
-                    # the lease will expire and recovery can reconcile the job.
                     return
 
         heartbeat = threading.Thread(
@@ -120,15 +128,66 @@ class LocalThreadPoolJobQueue:
                 job_id, worker_id, delay_seconds=30, max_attempts=self.MAX_ATTEMPTS
             )
 
+    def _submit(self, job_id: str):
+        with self._lock:
+            if self._stop_dispatcher.is_set() or job_id in self._in_flight:
+                return None
+            self._in_flight.add(job_id)
+        try:
+            future = self.executor.submit(self._execute_claimed, job_id, uuid.uuid4().hex)
+        except RuntimeError:
+            with self._lock:
+                self._in_flight.discard(job_id)
+            raise
+        future.add_done_callback(lambda _future, current=job_id: self._discard_in_flight(current))
+        return future
+
+    def _discard_in_flight(self, job_id: str) -> None:
+        with self._lock:
+            self._in_flight.discard(job_id)
+
+    def dispatch_due_jobs(self) -> int:
+        """Submit due jobs up to currently available local worker capacity."""
+        with self._lock:
+            capacity = self.max_workers - len(self._in_flight)
+        if capacity <= 0:
+            return 0
+        due_jobs = JOB_REPOSITORY.list_due_jobs(limit=capacity)
+        submitted = 0
+        for job in due_jobs:
+            if self._submit(job["id"]) is not None:
+                submitted += 1
+        return submitted
+
+    def _dispatch_loop(self) -> None:
+        while not self._stop_dispatcher.wait(self.DISPATCH_INTERVAL_SECONDS):
+            try:
+                self.dispatch_due_jobs()
+            except Exception:
+                # A later poll retries discovery; no job is claimed by this scan.
+                continue
+
+    def start_dispatcher(self) -> None:
+        """Start polling due jobs; call only after the local repository is initialized."""
+        with self._lock:
+            if self._dispatcher is not None or self._stop_dispatcher.is_set():
+                return
+            self._dispatcher = threading.Thread(
+                target=self._dispatch_loop, daemon=True, name="drift-queue-dispatcher"
+            )
+            self._dispatcher.start()
+
     def enqueue(self, job_id: str):
-        """Schedule a job ID; the worker must atomically claim it before execution."""
-        job = JOB_REPOSITORY.get(job_id)
-        if job is None:
+        """Validate and immediately submit a new job; later retries are found by polling."""
+        if JOB_REPOSITORY.get(job_id) is None:
             raise ValueError("Cannot enqueue an unknown job.")
-        worker_id = uuid.uuid4().hex
-        return self.executor.submit(self._execute_claimed, job_id, worker_id)
+        return self._submit(job_id)
 
     def shutdown(self, wait: bool = False, cancel_pending: bool = True) -> None:
+        self._stop_dispatcher.set()
+        dispatcher = self._dispatcher
+        if dispatcher is not None:
+            dispatcher.join(timeout=2)
         self.executor.shutdown(wait=wait, cancel_futures=cancel_pending)
 
 
@@ -370,6 +429,20 @@ class SQLiteJobRepository:
         with DB_LOCK, db() as conn:
             row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
         return row_to_job(row) if row else None
+
+    def list_due_jobs(self, limit: int = 10, timestamp: float | None = None) -> list[dict]:
+        """Return queued job IDs whose retry/initial availability time has arrived."""
+        if limit < 1:
+            return []
+        timestamp = now() if timestamp is None else timestamp
+        with DB_LOCK, db() as conn:
+            rows = conn.execute(
+                """SELECT id FROM jobs
+                   WHERE status='queued' AND available_at<=?
+                   ORDER BY available_at, created_at LIMIT ?""",
+                (timestamp, limit),
+            ).fetchall()
+        return [{"id": row["id"]} for row in rows]
 
     def update(self, job_id: str, updates: dict) -> None:
         if not updates:
@@ -1439,6 +1512,7 @@ class LimitedThreadingHTTPServer(ThreadingHTTPServer):
 
 def main():
     init_db()
+    JOB_QUEUE.start_dispatcher()
     recovered = recover_interrupted_jobs()
     if recovered:
         print(f"Marked {recovered} interrupted job(s) as failed after restart.", flush=True)
