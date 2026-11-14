@@ -72,6 +72,21 @@ class DriftHelperTests(unittest.TestCase):
         self.assertNotIn(":", result)
         self.assertTrue(result.endswith(".mp4"))
 
+    def test_public_job_hides_internal_storage_paths(self):
+        job = {
+            "id": "job123456",
+            "status": "ready",
+            "url": "https://www.youtube.com/watch?v=test",
+            "file_path": "/srv/drift/private/job.mp4",
+            "job_dir": "/srv/drift/private",
+            "file_size": 123,
+        }
+        public = drift.public_job(job)
+        self.assertEqual(public["id"], "job123456")
+        self.assertEqual(public["file_size"], 123)
+        self.assertNotIn("file_path", public)
+        self.assertNotIn("job_dir", public)
+
     def test_error_messages_are_sanitized(self):
         self.assertIn("403/429", drift.clean_error(RuntimeError("HTTP Error 429")))
 
