@@ -133,8 +133,20 @@ def init_db() -> None:
 
 
 def row_to_job(row: sqlite3.Row) -> dict:
-    job = dict(row)
-    return job
+    return dict(row)
+
+
+def public_job(job: dict | None) -> dict | None:
+    """Expose only browser-required job fields; never return server filesystem paths."""
+    if job is None:
+        return None
+    public_fields = {
+        "id", "status", "phase", "progress", "downloaded_bytes", "total_bytes",
+        "speed", "eta", "url", "quality", "format", "platform", "title",
+        "thumbnail", "filename", "file_size", "message", "error", "created_at",
+        "updated_at", "completed_at", "duration",
+    }
+    return {key: value for key, value in job.items() if key in public_fields}
 
 
 def get_job(job_id: str) -> dict | None:
@@ -661,7 +673,7 @@ class Handler(BaseHTTPRequestHandler):
         m = re.fullmatch(r"/api/downloads/([A-Za-z0-9_-]+)", path)
         if m:
             job = get_job(m.group(1))
-            return self.send_json({"success":True,"job":job} if job else {"success":False,"message":"Download job not found or expired."}, 200 if job else 404)
+            return self.send_json({"success":True,"job":public_job(job)} if job else {"success":False,"message":"Download job not found or expired."}, 200 if job else 404)
         m = re.fullmatch(r"/api/downloads/([A-Za-z0-9_-]+)/file", path)
         if m: return self.stream_file(m.group(1))
         if not path.startswith("/api/"):
@@ -766,7 +778,7 @@ class Handler(BaseHTTPRequestHandler):
              "completed_at":None,"job_dir":None,"file_path":None,"duration":str(body.get("duration") or "")[:100]}
         insert_job(job)
         EXECUTOR.submit(run_download,job_id,url,quality)
-        return self.send_json({"success":True,"job":job},202)
+        return self.send_json({"success":True,"job":public_job(job)},202)
 
     def cancel(self, job_id):
         job=get_job(job_id)
@@ -780,7 +792,7 @@ class Handler(BaseHTTPRequestHandler):
                 (now(), job_id),
             )
             conn.commit()
-        return self.send_json({"success":True,"job":get_job(job_id)})
+        return self.send_json({"success":True,"job":public_job(get_job(job_id))})
 
 
 def main():
