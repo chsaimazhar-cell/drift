@@ -281,6 +281,18 @@ class DriftHelperTests(unittest.TestCase):
         self.assertNotIn("pass", cleaned)
         self.assertIn("[redacted URL]", cleaned)
 
+    def test_cors_is_closed_by_default(self):
+        class FakeHandler:
+            headers = {"Origin": "https://attacker.example"}
+            sent = []
+            def send_header(self, key, value):
+                self.sent.append((key, value))
+
+        handler = FakeHandler()
+        with patch.dict(os.environ, {}, clear=True):
+            drift.Handler.send_cors(handler)
+        self.assertFalse(any(key == "Access-Control-Allow-Origin" for key, _ in handler.sent))
+
     def test_cors_only_allows_configured_origin(self):
         class FakeHandler:
             headers = {"Origin": "https://attacker.example"}
