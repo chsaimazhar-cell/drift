@@ -633,11 +633,23 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def read_json(self):
-        length = int(self.headers.get("Content-Length", "0"))
-        if length > 64 * 1024: raise ValueError("Request body is too large.")
-        raw = self.rfile.read(length) if length else b"{}"
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json":
+            raise ValueError("Send this request as application/json.")
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+        except (TypeError, ValueError):
+            raise ValueError("A valid Content-Length header is required.")
+        if length <= 0:
+            raise ValueError("The JSON request body is empty.")
+        if length > 64 * 1024:
+            raise ValueError("Request body is too large.")
+        raw = self.rfile.read(length)
+        if len(raw) != length:
+            raise ValueError("The request body was incomplete.")
         data = json.loads(raw.decode("utf-8"))
-        if not isinstance(data, dict): raise ValueError("JSON body must be an object.")
+        if not isinstance(data, dict):
+            raise ValueError("JSON body must be an object.")
         return data
 
     def static_file_path(self, path: str) -> Path | None:
