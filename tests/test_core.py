@@ -93,6 +93,40 @@ class DriftHelperTests(unittest.TestCase):
                     ).fetchone()[0]
                 self.assertEqual(count, 1)
 
+    def test_storage_budget_reserves_active_jobs_and_counts_ready_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            test_db = Path(temp) / "storage.sqlite3"
+            with patch.object(drift, "DB_PATH", test_db), patch.object(drift, "DOWNLOAD_ROOT", Path(temp)), patch.object(drift, "MAX_TOTAL_JOBS", 5), patch.object(drift, "MAX_DOWNLOAD_BYTES", 100), patch.object(drift, "MAX_STORAGE_BYTES", 250), patch.object(drift.shutil, "disk_usage", return_value=type("Usage", (), {"free": 10000})()):
+                drift.init_db()
+                base = {
+                    "status": "queued", "phase": "Queued",
+                    "url": "https://www.youtube.com/watch?v=one", "quality": "best",
+                    "format": "MP4", "platform": "YouTube",
+                    "created_at": drift.now(), "updated_at": drift.now(),
+                }
+                self.assertTrue(drift.insert_job_if_capacity(dict(base, id="active-1")))
+                self.assertTrue(drift.insert_job_if_capacity(dict(base, id="active-2")))
+                self.assertFalse(drift.insert_job_if_capacity(dict(base, id="active-3")))
+                with drift.db() as conn:
+                    conn.execute("UPDATE jobs SET status='ready', file_size=80 WHERE id='active-1'")
+                self.assertTrue(drift.insert_job_if_capacity(dict(base, id="active-3")))
+                with drift.db() as conn:
+                    conn.execute("UPDATE jobs SET status='ready', file_size=80 WHERE id='active-2'")
+                self.assertFalse(drift.insert_job_if_capacity(dict(base, id="active-4")))
+
+    def test_storage_budget_rejects_when_disk_free_space_is_low(self):
+        with tempfile.TemporaryDirectory() as temp:
+            test_db = Path(temp) / "storage.sqlite3"
+            with patch.object(drift, "DB_PATH", test_db), patch.object(drift, "DOWNLOAD_ROOT", Path(temp)), patch.object(drift, "MAX_TOTAL_JOBS", 5), patch.object(drift, "MAX_DOWNLOAD_BYTES", 100), patch.object(drift, "MAX_STORAGE_BYTES", 1000), patch.object(drift.shutil, "disk_usage", return_value=type("Usage", (), {"free": 99})()):
+                drift.init_db()
+                job = {
+                    "id": "low-disk", "status": "queued", "phase": "Queued",
+                    "url": "https://www.youtube.com/watch?v=one", "quality": "best",
+                    "format": "MP4", "platform": "YouTube",
+                    "created_at": drift.now(), "updated_at": drift.now(),
+                }
+                self.assertFalse(drift.insert_job_if_capacity(job))
+
     def test_json_body_requires_content_type_and_valid_length(self):
         handler = object.__new__(drift.Handler)
         handler.headers = {"Content-Type": "text/plain", "Content-Length": "2"}
