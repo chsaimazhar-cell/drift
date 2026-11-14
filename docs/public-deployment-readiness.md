@@ -98,6 +98,7 @@ No production migration, provider provisioning, database creation, object-storag
 - [x] Validate supported source hosts, reject credentials/control characters/non-standard ports, and reject non-global DNS answers at initial URL validation.
 - [x] Redact media URL query strings from downloader errors and job IDs/query strings from HTTP access logs.
 - [x] Default CORS to closed; a separately hosted frontend must configure the exact allowed origin explicitly.
+- [x] Add a local emergency pause switch (`DRIFT_ACCEPTING_WORK=false`) for new analysis/download submissions and expose its state in the health response. This is single-process configuration only; it does not satisfy the shared production kill-switch requirement.
 
 ### Remaining implementation work (deployment blockers)
 
