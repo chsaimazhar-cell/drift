@@ -110,7 +110,7 @@ Billing alerts are not necessarily hard spending caps. Application-enforced quot
 
 ### Remaining deployment blockers
 
-- [ ] PostgreSQL production repository, migrations, atomic claims, and concurrency integration tests.
+- [x] Add a provider-neutral PostgreSQL repository adapter with conditional claims, leases, bounded retries, shared capacity reservation, recovery, and retention operations; helper tests only.\n- [ ] Wire PostgreSQL into the application, add a reviewed migration runner/driver, and pass live PostgreSQL transaction, concurrency, restart, and restore integration tests.
 - [ ] Independent durable worker, lease heartbeat, restart/crash recovery, idempotency, and orphan reconciliation.
 - [ ] Real private object storage adapter, signed download authorization, retention, and deletion.
 - [ ] Real shared abuse-control adapter, global quotas, daily limits, usage accounting, and kill switch.
