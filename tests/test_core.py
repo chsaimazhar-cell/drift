@@ -97,7 +97,7 @@ class DriftHelperTests(unittest.TestCase):
             handler.setup()
         self.assertEqual(handler.connection.timeout, 17)
 
-    def test_startup_marks_interrupted_jobs_failed_and_removes_partial_files(self):
+    def test_startup_requeues_interrupted_jobs_and_removes_partial_files(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / "downloads"
             root.mkdir()
@@ -120,8 +120,31 @@ class DriftHelperTests(unittest.TestCase):
                 self.assertEqual(recovered, 1)
                 self.assertFalse(partial.exists())
                 stored = drift.get_job("interrupted-job")
-                self.assertEqual(stored["status"], "failed")
-                self.assertIn("restarted", stored["message"])
+                self.assertEqual(stored["status"], "queued")
+                self.assertIn("retry scheduled", stored["message"])
+                self.assertIsNone(stored["lease_owner"])
+
+    def test_startup_preserves_delayed_queued_jobs_and_fails_exhausted_interrupted_jobs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            database = Path(temp) / "jobs.sqlite3"
+            with patch.object(drift, "DB_PATH", database):
+                drift.init_db()
+                base = {
+                    "phase": "Queued", "url": "https://www.youtube.com/watch?v=test",
+                    "quality": "best", "format": "MP4", "platform": "YouTube",
+                    "created_at": 1, "updated_at": 1,
+                }
+                queued = dict(base, id="delayed-queued", status="queued", available_at=500)
+                exhausted = dict(base, id="exhausted", status="processing", attempts=3)
+                self.assertTrue(drift.JOB_REPOSITORY.insert(queued))
+                self.assertTrue(drift.JOB_REPOSITORY.insert(exhausted))
+                rows = drift.JOB_REPOSITORY.recover_interrupted(timestamp=100)
+                self.assertEqual(len(rows), 2)
+                stored_queued = drift.get_job("delayed-queued")
+                stored_exhausted = drift.get_job("exhausted")
+                self.assertEqual(stored_queued["status"], "queued")
+                self.assertEqual(stored_queued["available_at"], 500)
+                self.assertEqual(stored_exhausted["status"], "failed")
 
     def test_sqlite_migrations_create_fresh_schema_and_record_version(self):
         with tempfile.TemporaryDirectory() as temp:
