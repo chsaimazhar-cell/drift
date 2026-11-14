@@ -506,5 +506,36 @@ class DriftHelperTests(unittest.TestCase):
                 worker.join(timeout=5)
 
 
+    def test_local_media_storage_workspace_lifecycle(self):
+        with tempfile.TemporaryDirectory() as temp:
+            storage = drift.LocalMediaStorage(Path(temp))
+            workspace = storage.create_workspace("storage-test")
+            source = workspace / "source.webm"
+            source.write_bytes(b"media-data")
+            self.assertEqual(storage.find_media(workspace), source)
+            self.assertEqual(storage.size(source), 10)
+            final_path = workspace / "final.mp4"
+            self.assertEqual(storage.finalize(source, final_path), final_path)
+            self.assertTrue(storage.is_file(final_path))
+            with storage.open_file(final_path) as stream:
+                self.assertEqual(stream.read(), b"media-data")
+            self.assertEqual(storage.size(final_path), 10)
+            storage.delete_workspace(workspace)
+            self.assertFalse(workspace.exists())
+
+    def test_local_media_storage_removes_only_owned_interrupted_workspace(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            storage = drift.LocalMediaStorage(root)
+            owned = root / "drift-interrupted"
+            owned.mkdir()
+            external = root / "other-directory"
+            external.mkdir()
+            storage.remove_interrupted(str(owned))
+            storage.remove_interrupted(str(external))
+            self.assertFalse(owned.exists())
+            self.assertTrue(external.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
