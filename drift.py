@@ -74,8 +74,12 @@ class LocalThreadPoolJobQueue:
     def __init__(self, max_workers: int):
         self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="drift-download")
 
-    def enqueue(self, worker, *args):
-        return self.executor.submit(worker, *args)
+    def enqueue(self, job_id: str):
+        """Queue only a durable job identifier, not a process-local callable."""
+        job = JOB_REPOSITORY.get(job_id)
+        if job is None:
+            raise ValueError("Cannot enqueue an unknown job.")
+        return self.executor.submit(run_download, job_id, job["url"], job["quality"])
 
     def shutdown(self, wait: bool = False, cancel_pending: bool = True) -> None:
         self.executor.shutdown(wait=wait, cancel_futures=cancel_pending)
@@ -1017,7 +1021,7 @@ class Handler(BaseHTTPRequestHandler):
             CANCEL_EVENTS.pop(job_id, None)
             return self.send_json({"success":False,"message":"Drift is at its current capacity. Please wait for a download to finish or for temporary files to expire."},429)
         try:
-            JOB_QUEUE.enqueue(run_download,job_id,url,quality)
+            JOB_QUEUE.enqueue(job_id)
         except RuntimeError:
             CANCEL_EVENTS.pop(job_id, None)
             update_job(job_id, status="failed", phase="Failed",
