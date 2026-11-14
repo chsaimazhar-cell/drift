@@ -116,7 +116,9 @@ class PostgresRepositoryIntegrationTests(unittest.TestCase):
         ready = self.repo.get(job["id"])
         self.assertEqual(ready["status"], "ready")
         self.assertEqual(ready["filename"], "complete.mp4")
-        self.assertIsNone(ready["lease_owner"])
+        self.assertEqual(ready["lease_owner"], "worker-owner")
+        self.assertTrue(self.repo.acknowledge_job(job["id"], "worker-owner"))
+        self.assertIsNone(self.repo.get(job["id"])["lease_owner"])
 
     def test_startup_recovery_and_terminal_expiry(self):
         queued = self.make_job(
