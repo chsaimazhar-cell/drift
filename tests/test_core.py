@@ -319,7 +319,7 @@ class DriftHelperTests(unittest.TestCase):
                 self.assertEqual([job["id"] for job in interrupted], ["repo-contract-interrupted"])
                 recovered = repository.get("repo-contract-interrupted")
                 self.assertEqual(recovered["status"], "queued")
-                self.assertIn("restarted", recovered["message"].lower())
+                self.assertIsNone(recovered["lease_owner"])
 
     def test_media_probe_has_a_hard_timeout(self):
         timeout = subprocess.TimeoutExpired(cmd="ffmpeg", timeout=30)
