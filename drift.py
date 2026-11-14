@@ -667,15 +667,17 @@ class SQLiteJobRepository:
                 "SELECT COUNT(*) FROM jobs WHERE status IN ('queued','downloading','processing')"
             ).fetchone()[0]
 
-    def cancel_active(self, job_id: str) -> None:
+    def cancel_active(self, job_id: str) -> bool:
+        """Cancel active work and report whether this call changed its state."""
         with DB_LOCK, db() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """UPDATE jobs SET status='cancelled', phase='Cancelled',
                    message='Cancelling download…', lease_owner=NULL, lease_expires_at=NULL, updated_at=?
                    WHERE id=? AND status IN ('queued','downloading','processing')""",
                 (now(), job_id),
             )
             conn.commit()
+        return cursor.rowcount == 1
 
 
 
