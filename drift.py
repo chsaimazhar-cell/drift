@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Generator, Protocol, runtime_checkable
 from urllib.parse import quote, unquote, urlparse
 
+from job_repository_contract import JobRepository
+
 # Dependencies are installed explicitly from requirements.txt. Never run pip during import.
 try:
     import certifi
@@ -683,10 +685,10 @@ class SQLiteJobRepository:
 
 # The current adapter is intentionally local-only. A managed database adapter
 # can replace this object without changing the HTTP handlers or downloader.
-JOB_REPOSITORY = SQLiteJobRepository()
+JOB_REPOSITORY: JobRepository = SQLiteJobRepository()
 
 
-def _active_job_repository():
+def _active_job_repository() -> JobRepository:
     return DOWNLOAD_REPOSITORY_CONTEXT.get() or JOB_REPOSITORY
 
 
