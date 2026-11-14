@@ -50,16 +50,20 @@ class PostgresWorker:
         self._stop = threading.Event()
         self._last_recovery = 0.0
 
-    def _heartbeat(self, job_id: str, finished: threading.Event) -> None:
+    def _heartbeat(
+        self, job_id: str, finished: threading.Event, lease_lost: threading.Event
+    ) -> None:
         interval = max(1.0, self.lease_seconds / 3)
         while not finished.wait(interval):
             try:
                 if not self.repository.renew_lease(
                     job_id, self.worker_id, lease_seconds=self.lease_seconds
                 ):
+                    lease_lost.set()
                     logger.warning("Worker lease renewal stopped for job %s", job_id[:8])
                     return
             except Exception:
+                lease_lost.set()
                 logger.exception("Worker lease renewal failed for job %s", job_id[:8])
                 return
 
@@ -73,8 +77,12 @@ class PostgresWorker:
 
         job_id = job["id"]
         finished = threading.Event()
+        lease_lost = threading.Event()
+        # This private, in-process signal lets a cooperative processor stop
+        # external work if another worker may have reclaimed the job.
+        job["_lease_lost_event"] = lease_lost
         heartbeat = threading.Thread(
-            target=self._heartbeat, args=(job_id, finished),
+            target=self._heartbeat, args=(job_id, finished, lease_lost),
             daemon=True, name=f"drift-heartbeat-{job_id[:8]}",
         )
         heartbeat.start()
@@ -82,18 +90,23 @@ class PostgresWorker:
             self.processor(job)
         except Exception:
             logger.exception("Worker processing failed for job %s", job_id[:8])
-            try:
-                self.repository.retry_job(
-                    job_id, self.worker_id,
-                    delay_seconds=self.retry_delay_seconds,
-                    max_attempts=self.max_attempts,
-                )
-            except Exception:
-                logger.exception("Could not schedule retry for job %s", job_id[:8])
+            if not lease_lost.is_set():
+                try:
+                    self.repository.retry_job(
+                        job_id, self.worker_id,
+                        delay_seconds=self.retry_delay_seconds,
+                        max_attempts=self.max_attempts,
+                    )
+                except Exception:
+                    logger.exception("Could not schedule retry for job %s", job_id[:8])
             return True
         finally:
             finished.set()
             heartbeat.join(timeout=2)
+
+        if lease_lost.is_set():
+            logger.warning("Skipping completion update after lease loss for job %s", job_id[:8])
+            return True
 
         current = self.repository.get(job_id)
         if current and current.get("status") in TERMINAL_STATES:
