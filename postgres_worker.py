@@ -32,13 +32,15 @@ class PostgresWorker:
         retry_delay_seconds: int = 30,
         max_attempts: int = 3,
         recovery_interval_seconds: float = 30.0,
+        heartbeat_interval_seconds: float = 5.0,
     ):
         if not callable(processor):
             raise TypeError("A job processor callback is required.")
         if lease_seconds < 3 or poll_seconds <= 0 or retry_delay_seconds < 0:
             raise ValueError("Worker timing configuration is invalid.")
-        if max_attempts < 1 or recovery_interval_seconds <= 0:
-            raise ValueError("Worker retry and recovery configuration is invalid.")
+        if (max_attempts < 1 or recovery_interval_seconds <= 0
+                or heartbeat_interval_seconds <= 0):
+            raise ValueError("Worker retry, recovery, and heartbeat configuration is invalid.")
         self.repository = repository
         self.processor = processor
         self.worker_id = worker_id or f"drift-worker-{uuid.uuid4().hex}"
@@ -47,13 +49,19 @@ class PostgresWorker:
         self.retry_delay_seconds = retry_delay_seconds
         self.max_attempts = max_attempts
         self.recovery_interval_seconds = recovery_interval_seconds
+        # Poll shared lease state frequently enough for API cancellation to stop
+        # long-running media work promptly, without renewing more often than
+        # one third of the lease duration.
+        self.heartbeat_interval_seconds = min(
+            heartbeat_interval_seconds, lease_seconds / 3
+        )
         self._stop = threading.Event()
         self._last_recovery = 0.0
 
     def _heartbeat(
         self, job_id: str, finished: threading.Event, lease_lost: threading.Event
     ) -> None:
-        interval = max(1.0, self.lease_seconds / 3)
+        interval = self.heartbeat_interval_seconds
         while not finished.wait(interval):
             try:
                 if not self.repository.renew_lease(
