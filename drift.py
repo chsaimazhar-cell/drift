@@ -1100,10 +1100,11 @@ def run_download(job_id: str, url: str, quality: str) -> None:
             if job_dir is not None:
                 shutil.rmtree(job_dir, ignore_errors=True)
             return
-        message = clean_error(exc)
-        update_job(job_id, status="failed", phase="Failed", error=message, message=message)
+        # Let the queue adapter decide whether this failure is retryable.
+        # Marking the job failed here would make retry_job() reject the transition.
         if job_dir is not None:
             shutil.rmtree(job_dir, ignore_errors=True)
+        raise
     finally:
         if uploaded_object_key and PRIVATE_MEDIA_STORE is not None:
             try:
