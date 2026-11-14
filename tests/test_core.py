@@ -131,6 +131,30 @@ class DriftHelperTests(unittest.TestCase):
     def test_error_messages_are_sanitized(self):
         self.assertIn("403/429", drift.clean_error(RuntimeError("HTTP Error 429")))
 
+    def test_client_ip_ignores_forwarded_header_by_default(self):
+        class FakeHandler:
+            client_address = ("203.0.113.10", 12345)
+            headers = {"X-Forwarded-For": "198.51.100.25"}
+
+        with patch.dict(os.environ, {"DRIFT_TRUST_PROXY": ""}):
+            self.assertEqual(drift.client_key(FakeHandler()), "203.0.113.10")
+
+    def test_client_ip_uses_forwarded_header_only_when_trusted(self):
+        class FakeHandler:
+            client_address = ("203.0.113.10", 12345)
+            headers = {"X-Forwarded-For": "198.51.100.25, 203.0.113.20"}
+
+        with patch.dict(os.environ, {"DRIFT_TRUST_PROXY": "true"}):
+            self.assertEqual(drift.client_key(FakeHandler()), "198.51.100.25")
+
+    def test_client_ip_falls_back_when_trusted_header_is_invalid(self):
+        class FakeHandler:
+            client_address = ("203.0.113.10", 12345)
+            headers = {"X-Forwarded-For": "not-an-ip"}
+
+        with patch.dict(os.environ, {"DRIFT_TRUST_PROXY": "1"}):
+            self.assertEqual(drift.client_key(FakeHandler()), "203.0.113.10")
+
     def test_rate_limit_blocks_requests_over_the_limit(self):
         class FakeHandler:
             client_address = ("203.0.113.10", 12345)
