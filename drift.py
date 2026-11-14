@@ -42,7 +42,9 @@ HOST = os.getenv("DRIFT_HOST") or ("0.0.0.0" if os.getenv("PORT") else "127.0.0.
 MAX_URL_LENGTH = 4096
 MAX_DOWNLOAD_BYTES = int(os.getenv("DRIFT_MAX_DOWNLOAD_MB", "500")) * 1024 * 1024
 JOB_TTL_SECONDS = int(os.getenv("DRIFT_JOB_TTL_SECONDS", str(30 * 60)))
-MAX_ACTIVE_JOBS = int(os.getenv("DRIFT_MAX_ACTIVE_JOBS", "2"))
+MAX_ACTIVE_JOBS = max(1, int(os.getenv("DRIFT_MAX_ACTIVE_JOBS", "2")))
+MAX_QUEUED_JOBS = max(0, int(os.getenv("DRIFT_MAX_QUEUED_JOBS", "4")))
+MAX_TOTAL_JOBS = MAX_ACTIVE_JOBS + MAX_QUEUED_JOBS
 DOWNLOAD_ROOT = Path(os.getenv("DRIFT_DOWNLOAD_ROOT", str(Path(tempfile.gettempdir()) / "drift-downloads")))
 DOWNLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 DB_PATH = Path(os.getenv("DRIFT_DB_PATH", str(DOWNLOAD_ROOT / "drift.sqlite3")))
@@ -190,6 +192,24 @@ def insert_job(job: dict) -> None:
     with DB_LOCK, db() as conn:
         conn.execute(f"INSERT INTO jobs ({','.join(columns)}) VALUES ({placeholders})", [job[c] for c in columns])
         conn.commit()
+
+
+def insert_job_if_capacity(job: dict) -> bool:
+    """Atomically enforce the per-process running-plus-queued job ceiling."""
+    columns = list(job.keys())
+    placeholders = ",".join("?" for _ in columns)
+    with DB_LOCK, db() as conn:
+        total = conn.execute(
+            "SELECT COUNT(*) FROM jobs WHERE status IN ('queued','downloading','processing')"
+        ).fetchone()[0]
+        if total >= MAX_TOTAL_JOBS:
+            return False
+        conn.execute(
+            f"INSERT INTO jobs ({','.join(columns)}) VALUES ({placeholders})",
+            [job[column] for column in columns],
+        )
+        conn.commit()
+        return True
 
 
 def validate_public_url(raw_url: str):
@@ -764,10 +784,6 @@ class Handler(BaseHTTPRequestHandler):
         valid, result=validate_public_url(url)
         if not valid: return self.send_json({"success":False,"message":result},400)
         quality=normalize_quality(quality)
-        with DB_LOCK, db() as conn:
-            active=conn.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','downloading','processing')").fetchone()[0]
-        if active >= MAX_ACTIVE_JOBS + 4:
-            return self.send_json({"success":False,"message":"The download queue is full. Please wait for an active download to finish."},429)
         job_id=uuid.uuid4().hex
         event=threading.Event(); CANCEL_EVENTS[job_id]=event
         t=now()
@@ -776,8 +792,17 @@ class Handler(BaseHTTPRequestHandler):
              "title":str(body.get("title") or "Preparing media…")[:300],"thumbnail":str(body.get("thumbnail") or "")[:2000],
              "filename":None,"file_size":0,"message":"Your download is queued.","error":None,"created_at":t,"updated_at":t,
              "completed_at":None,"job_dir":None,"file_path":None,"duration":str(body.get("duration") or "")[:100]}
-        insert_job(job)
-        EXECUTOR.submit(run_download,job_id,url,quality)
+        if not insert_job_if_capacity(job):
+            CANCEL_EVENTS.pop(job_id, None)
+            return self.send_json({"success":False,"message":"The download queue is full. Please wait for an active download to finish."},429)
+        try:
+            EXECUTOR.submit(run_download,job_id,url,quality)
+        except RuntimeError:
+            CANCEL_EVENTS.pop(job_id, None)
+            update_job(job_id, status="failed", phase="Failed",
+                       error="The download service is temporarily unavailable.",
+                       message="The download service is temporarily unavailable.")
+            return self.send_json({"success":False,"message":"The download service is temporarily unavailable. Please try again shortly."},503)
         return self.send_json({"success":True,"job":public_job(job)},202)
 
     def cancel(self, job_id):
