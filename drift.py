@@ -709,11 +709,11 @@ def mark_job_ready(job_id: str, **updates) -> bool:
 
 
 def insert_job(job: dict) -> None:
-    JOB_REPOSITORY.insert(job)
+    _active_job_repository().insert(job)
 
 
 def insert_job_if_capacity(job: dict) -> bool:
-    return JOB_REPOSITORY.insert_if_capacity(job)
+    return _active_job_repository().insert_if_capacity(job)
 
 
 def validate_public_url(raw_url: str):
@@ -1258,7 +1258,7 @@ def run_download(
 
 def recover_interrupted_jobs() -> int:
     """Preserve queued jobs and requeue interrupted work after removing partial output."""
-    rows = JOB_REPOSITORY.recover_interrupted(max_attempts=LocalThreadPoolJobQueue.MAX_ATTEMPTS)
+    rows = _active_job_repository().recover_interrupted(max_attempts=LocalThreadPoolJobQueue.MAX_ATTEMPTS)
     recovered = 0
     for row in rows:
         if row.get("status") in {"downloading", "processing"}:
@@ -1272,7 +1272,7 @@ def recover_interrupted_jobs() -> int:
 
 def cleanup_once() -> None:
     cutoff = now() - JOB_TTL_SECONDS
-    cleanup = JOB_REPOSITORY.expired_jobs(cutoff)
+    cleanup = _active_job_repository().expired_jobs(cutoff)
     tracked = {Path(path).name for path in cleanup["tracked"] if path}
     MEDIA_STORAGE.cleanup_stale(tracked, cutoff)
     if PRIVATE_MEDIA_STORE is not None:
@@ -1407,7 +1407,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/api/health":
-            active = JOB_REPOSITORY.active_count()
+            active = _active_job_repository().active_count()
             return self.send_json({"status":"ok","service":"drift-backend","downloader":yt_dlp is not None,
                                    "ffmpeg":find_ffmpeg() is not None,"active_jobs":active,
                                    "max_active_jobs":MAX_ACTIVE_JOBS,
@@ -1557,7 +1557,7 @@ class Handler(BaseHTTPRequestHandler):
         if not job: return self.send_json({"success":False,"message":"Download job not found or expired."},404)
         if job["status"] in {"ready","failed","cancelled"}: return self.send_json({"success":True,"job":job})
         event=CANCEL_EVENTS.setdefault(job_id,threading.Event()); event.set()
-        JOB_REPOSITORY.cancel_active(job_id)
+        _active_job_repository().cancel_active(job_id)
         return self.send_json({"success":True,"job":public_job(get_job(job_id))})
 
 
