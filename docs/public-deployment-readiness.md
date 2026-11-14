@@ -84,9 +84,47 @@ A provider billing alert is not always a hard spending cap. The service must als
 
 No production migration, provider provisioning, database creation, object-storage setup, public deployment, domain purchase, or advertisements have been performed. The current branch is the safe work area; `main` remains the source of truth until reviewed changes are ready.
 
+## Current audit checklist (2026-11-14)
+
+### Completed in the repository (code-level; not production-host verification)
+
+- [x] Preserve the original interface in static HTML, CSS, and JavaScript.
+- [x] Separate frontend API origin through a build-time environment variable.
+- [x] Add Python tests, frontend build/syntax checks, Compose validation, and container build to CI.
+- [x] Package the current single-instance backend in a non-root container with a health check.
+- [x] Add conservative single-instance Compose defaults and a persistent local volume.
+- [x] Bound HTTP handler concurrency, active/queued jobs, file size, local storage reservations, socket idle time, FFmpeg inspection, and FFmpeg conversion.
+- [x] Recover interrupted jobs safely after a process restart.
+- [x] Validate supported source hosts, reject credentials/control characters/non-standard ports, and reject non-global DNS answers at initial URL validation.
+- [x] Redact media URL query strings from downloader errors and job IDs/query strings from HTTP access logs.
+- [x] Default CORS to closed; a separately hosted frontend must configure the exact allowed origin explicitly.
+
+### Remaining implementation work (deployment blockers)
+
+- [ ] Enforce outbound network policy at the host/container network layer, including redirects and DNS rebinding. Application-level URL validation is not sufficient.
+- [ ] Replace the in-process executor and cancellation map with a durable queue and independent worker lifecycle.
+- [ ] Replace local SQLite as the production shared job store with a managed persistent database and migrations.
+- [ ] Move completed media to private durable object storage with short-lived download authorization and automatic deletion.
+- [ ] Add shared per-client and global quotas, active-job limits, abuse controls, and an operational kill switch.
+- [ ] Define a trusted reverse-proxy boundary and reliable client-IP handling; never trust spoofable forwarded headers.
+- [ ] Add hard operational limits for worker CPU/memory/time, storage, bandwidth/egress, and provider spending. Billing alerts alone are not a hard cap.
+- [ ] Add integration/load/failure tests for concurrent jobs, restarts, queue saturation, object expiry, abuse, and real provider redirects.
+- [ ] Choose and configure a backend host and its required network controls; no provider has been selected or provisioned.
+- [ ] Connect the static frontend to the verified backend origin and test the complete browser download flow.
+- [ ] Complete a private beta and operational monitoring before any public launch.
+
+### Explicitly deferred by the owner
+
+- [ ] Production deployment (wait for the owner's explicit go-ahead after readiness review).
+- [ ] Domain purchase.
+- [ ] Advertisements.
+- [ ] Any paid infrastructure provisioning without explicit approval.
+
+The static Vercel frontend alone is not a working Drift deployment. Do not ask the owner to click Deploy until the backend and its security/storage dependencies are ready.
+
 ## Verification update
 
-The latest GitHub Actions run for commit `bcaa29580e88fa425dd326e513ee9717a99957b6` completed successfully. The workflow validates the Python test suite, builds the extracted frontend, checks JavaScript syntax, validates the Compose configuration, and builds the container image.
+The GitHub Actions run for commit `91c60f6aac41bcc56aaaf1358f2a7c7ab90aaf83` completed successfully. It verifies the Python test suite, frontend build and JavaScript syntax, Compose configuration, and container build. Newer commits that make CORS fail closed by default and add a regression test are awaiting their own CI results.
 
 The branch now also includes bounded HTTP handler concurrency, FFmpeg probe and conversion timeouts, an HTTP idle-connection timeout, startup recovery for interrupted jobs, stricter URL port/control-character validation, and tests for these protections.
 
