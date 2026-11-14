@@ -1026,9 +1026,10 @@ class DriftHelperTests(unittest.TestCase):
                 future = queue.enqueue(job["id"])
                 with self.assertRaisesRegex(RuntimeError, "temporary downloader failure"):
                     future.result(timeout=3)
-                repository.retry_job.assert_called_once_with(
-                    job["id"], unittest.mock.ANY, delay_seconds=30, max_attempts=queue.MAX_ATTEMPTS
-                )
+                repository.retry_job.assert_called_once()
+                retry_args, retry_kwargs = repository.retry_job.call_args
+                self.assertEqual(retry_args[0], job["id"])
+                self.assertEqual(retry_kwargs, {"delay_seconds": 30, "max_attempts": queue.MAX_ATTEMPTS})
                 repository.acknowledge_job.assert_not_called()
             finally:
                 queue.shutdown(wait=True, cancel_pending=True)
