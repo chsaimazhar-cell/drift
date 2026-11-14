@@ -134,6 +134,12 @@ class DriftHelperTests(unittest.TestCase):
                 self.assertEqual(version, drift.JOB_REPOSITORY.SCHEMA_VERSION)
                 self.assertIn("id", columns)
                 self.assertIn("file_path", columns)
+                self.assertIn("storage_backend", columns)
+                self.assertIn("object_key", columns)
+                self.assertIn("object_content_type", columns)
+                self.assertIn("object_size", columns)
+                self.assertIn("object_expires_at", columns)
+                self.assertIn("idx_jobs_object_expiry", indexes)
                 self.assertIn("idx_jobs_updated", indexes)
                 self.assertIn("idx_jobs_status", indexes)
 
@@ -158,6 +164,35 @@ class DriftHelperTests(unittest.TestCase):
                         conn.execute("PRAGMA user_version").fetchone()[0],
                         drift.JOB_REPOSITORY.SCHEMA_VERSION,
                     )
+
+    def test_private_object_metadata_defaults_and_persists(self):
+        with tempfile.TemporaryDirectory() as temp:
+            database = Path(temp) / "object-metadata.sqlite3"
+            with patch.object(drift, "DB_PATH", database):
+                drift.JOB_REPOSITORY.initialize()
+                base = {
+                    "id": "object-metadata-job", "status": "ready", "phase": "Ready",
+                    "url": "https://youtube.com/watch?v=metadata", "quality": "best",
+                    "format": "MP4", "platform": "YouTube",
+                    "created_at": drift.now(), "updated_at": drift.now(),
+                }
+                drift.JOB_REPOSITORY.insert(base)
+                stored = drift.get_job(base["id"])
+                self.assertEqual(stored["storage_backend"], "local")
+                self.assertIsNone(stored["object_key"])
+                drift.JOB_REPOSITORY.update(base["id"], {
+                    "storage_backend": "object",
+                    "object_key": "jobs/object-metadata-job/video.mp4",
+                    "object_content_type": "video/mp4",
+                    "object_size": 12345,
+                    "object_expires_at": 2000000000.0,
+                })
+                stored = drift.get_job(base["id"])
+                self.assertEqual(stored["storage_backend"], "object")
+                self.assertEqual(stored["object_key"], "jobs/object-metadata-job/video.mp4")
+                self.assertEqual(stored["object_content_type"], "video/mp4")
+                self.assertEqual(stored["object_size"], 12345)
+                self.assertEqual(stored["object_expires_at"], 2000000000.0)
 
     def test_sqlite_migrations_are_idempotent(self):
         with tempfile.TemporaryDirectory() as temp:
