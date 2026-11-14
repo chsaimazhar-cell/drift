@@ -37,6 +37,7 @@ This is suitable for local development and controlled testing. It is not yet a h
 - HTTP(S)-only URL parsing, supported-host allowlist, credential rejection, and rejection of non-public DNS results.
 - A maximum download size, bounded worker count, basic rate limits, cancellation, job expiry, and temporary-file cleanup.
 - Filename sanitization, subprocess argument lists (not shell interpolation), MP4 compatibility processing, health endpoint, and tests for URL validation and byte-range file serving.
+- The Docker image runs as a non-root user; the Compose runtime now uses a read-only root filesystem, drops all Linux capabilities, enables `no-new-privileges`, and provides a bounded non-executable `/tmp` scratch mount. This reduces container privilege but does not solve downloader SSRF or egress filtering.
 - The frontend already uses a configurable `window.API_BASE`, which is a useful seam for separating the website from the API.
 
 ## Target architecture
