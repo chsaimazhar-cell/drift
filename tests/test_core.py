@@ -1046,13 +1046,10 @@ class DriftHelperTests(unittest.TestCase):
                 self.assertTrue(claim_started.wait(timeout=2))
                 self.assertEqual(queue.dispatch_due_jobs(), 0)
                 release_claim.set()
-                deadline = time.monotonic() + 2
-                while queue._in_flight and time.monotonic() < deadline:
-                    time.sleep(0.01)
-                repository.claim_job.assert_called_once()
             finally:
                 release_claim.set()
                 queue.shutdown(wait=True, cancel_pending=True)
+            repository.claim_job.assert_called_once()
 
     def test_run_download_propagates_transient_setup_failure_for_queue_retry(self):
         with patch.object(drift, "MEDIA_STORAGE") as storage, patch.object(
