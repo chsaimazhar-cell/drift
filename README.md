@@ -61,6 +61,7 @@ The application does not install or upgrade packages at startup. Install depende
 | `DRIFT_DOWNLOAD_ROOT` | System temporary directory | Download and database directory |
 | `DRIFT_DB_PATH` | `<download root>/drift.sqlite3` | SQLite database path |
 | `DRIFT_ALLOWED_ORIGIN` | `*` | CORS origin for a separately hosted frontend |
+| `DRIFT_TRUST_PROXY` | `false` | Trust the first `X-Forwarded-For` IP only behind a proxy that sanitizes/overwrites that header |
 | `DRIFT_COOKIES_FILE` | `cookies.txt` beside the script if present | Optional yt-dlp cookie file |
 | `DRIFT_COOKIES_BROWSER` | unset | Optional browser cookie source supported by yt-dlp |
 
@@ -84,6 +85,8 @@ Before opening Drift to worldwide public traffic, complete and verify:
 - A shared persistent database and durable job queue.
 - Durable download storage and safe file delivery.
 - Global abuse controls and correctly configured client-IP/proxy handling.
+
+For reverse-proxy deployments, keep `DRIFT_TRUST_PROXY=false` unless the backend is reachable only through a trusted proxy that **overwrites or sanitizes** incoming `X-Forwarded-For`. If that condition is met, set `DRIFT_TRUST_PROXY=true` so per-IP rate limits can use the visitor IP. Never enable it on a directly exposed backend or behind a proxy that simply appends to an untrusted incoming header; otherwise visitors may spoof IPs and bypass rate limits.
 - Outbound network protections against DNS rebinding and unsafe redirects.
 - Monitoring, hard usage limits, and provider spending safeguards.
 
