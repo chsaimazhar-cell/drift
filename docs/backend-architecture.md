@@ -59,7 +59,7 @@ Job IDs must remain high entropy and be treated as bearer capabilities unless a 
 - [x] Add focused repository lifecycle tests.
 - [x] Add broader SQLite repository contract coverage for reads, updates, conditional ready transitions, and interrupted-job recovery.
 - [ ] Add migration tests before introducing a managed database.
-- [ ] Add storage adapter contract tests beyond the current local lifecycle tests.
+- [x] Add local storage adapter contract tests for complete/partial media selection, stale-workspace cleanup, disk-space reporting, and workspace lifecycle.
 - [x] Extract local filesystem operations behind a storage interface.
 - [x] Extract local enqueue behind a job-ID-only queue boundary; the API no longer passes process-local worker callables into the queue.
 - [x] Add focused tests for job-ID dispatch and rejection of unknown jobs.
@@ -81,6 +81,10 @@ Job IDs must remain high entropy and be treated as bearer capabilities unless a 
 - Verify the frontend against the actual backend origin end-to-end.
 - Run a private beta with monitoring and a documented rollback procedure.
 - Only then request explicit approval for production deployment.
+
+## Provider research
+
+See `docs/backend-provider-evaluation.md` for the current provider comparison, preliminary architecture direction, free-tier limitations, security blockers, and approval gates. This is research only; no provider is selected or connected.
 
 ## Decisions intentionally left open
 
