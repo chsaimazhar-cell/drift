@@ -20,6 +20,7 @@ except ImportError:  # Keep the production runtime driver-optional.
     psycopg = None
 
 from postgres_repository import PostgresJobRepository
+from scripts.migrate_postgres import apply_migrations
 
 
 @unittest.skipUnless(DATABASE_URL and psycopg, "PostgreSQL integration environment is not configured")
@@ -27,9 +28,8 @@ class PostgresRepositoryIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.connect = staticmethod(lambda: psycopg.connect(DATABASE_URL))
-        migration = Path(__file__).resolve().parents[1] / "migrations/postgres/001_initial.sql"
         with cls.connect() as conn:
-            conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
+            cls.schema_version = apply_migrations(conn)
         cls.repo = PostgresJobRepository(
             cls.connect,
             max_active_jobs=2,
@@ -60,7 +60,10 @@ class PostgresRepositoryIntegrationTests(unittest.TestCase):
         job.update(overrides)
         return job
 
-    def test_migration_verification_and_insert_get(self):
+    def test_migration_runner_is_idempotent_and_insert_get(self):
+        with self.connect() as conn:
+            self.assertEqual(apply_migrations(conn), self.schema_version)
+        self.assertGreaterEqual(self.schema_version, 1)
         job = self.make_job()
         self.repo.insert(job)
         found = self.repo.get(job["id"])
