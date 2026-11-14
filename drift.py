@@ -1083,7 +1083,7 @@ def cleanup_once() -> None:
         for expired_job in cleanup["expired"]:
             if expired_job.get("storage_backend") == "object" and expired_job.get("object_key"):
                 PRIVATE_MEDIA_STORE.delete_object(expired_job["object_key"])
-        PRIVATE_MEDIA_STORE.delete_expired_objects(cutoff)
+        PRIVATE_MEDIA_STORE.delete_expired_objects(now())
 
 
 def cleanup_loop() -> None:
