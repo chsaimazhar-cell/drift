@@ -15,6 +15,7 @@ class FakeRepository:
         self.retries = []
         self.recoveries = 0
         self.renewals = 0
+        self.lose_lease = False
 
     def claim_next_job(self, worker_id, lease_seconds=300):
         if self.claimed:
@@ -24,7 +25,7 @@ class FakeRepository:
 
     def renew_lease(self, job_id, worker_id, lease_seconds=300):
         self.renewals += 1
-        return True
+        return not self.lose_lease
 
     def get(self, job_id):
         return dict(self.job)
@@ -79,6 +80,23 @@ class PostgresWorkerTests(unittest.TestCase):
         self.assertTrue(worker.run_once())
         self.assertEqual(len(repo.retries), 1)
         self.assertEqual(repo.acknowledged, [])
+
+    def test_lease_loss_is_exposed_and_prevents_acknowledgement(self):
+        repo = FakeRepository()
+        repo.lose_lease = True
+        observed = []
+
+        def process(job):
+            lost = job["_lease_lost_event"]
+            observed.append(lost.wait(timeout=2))
+
+        worker = PostgresWorker(
+            repo, process, worker_id="worker-test", lease_seconds=3
+        )
+        self.assertTrue(worker.run_once())
+        self.assertEqual(observed, [True])
+        self.assertEqual(repo.acknowledged, [])
+        self.assertEqual(repo.retries, [])
 
     def test_returns_false_when_no_job_is_due(self):
         repo = FakeRepository()
