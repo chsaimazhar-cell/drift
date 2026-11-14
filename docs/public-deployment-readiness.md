@@ -28,8 +28,8 @@ This is suitable for local development and controlled testing. It is not yet a h
 5. **Abuse controls are not production controls.** Current limits are in-memory and per apparent client IP; there are no durable per-IP daily quotas, per-IP active-job limits, global spending ceilings, or shared limits across instances.
 6. **Proxy identity is unresolved.** The app deliberately ignores forwarded-IP headers. Behind a reverse proxy, all clients may appear to have the proxy's address unless a trusted-proxy boundary is explicitly configured.
 7. **URL validation has a DNS time-of-check/time-of-use gap.** The hostname is checked before yt-dlp later connects to it. A DNS change or redirect can invalidate the earlier check. This needs defense-in-depth at the egress/network boundary, not just a one-time DNS lookup.
-8. **Job access uses an unguessable job ID as a bearer capability.** Status, cancellation, and file routes do not bind a job to a client capability beyond possession of the ID. The replacement API should use high-entropy job access tokens, store only their hashes, and avoid exposing them in logs or analytics.
-9. **CORS defaults to wildcard.** CORS is not authentication, but the production deployment should still set the exact frontend origin and reject unexpected browser origins where appropriate.
+8. **Job access uses an unguessable job ID as a bearer capability.** Status, cancellation, and file routes do not bind a job to a client capability beyond possession of the ID. Treat job IDs as bearer capabilities: keep them high-entropy and out of logs/analytics. A separate token-hash design remains a possible hardening step, not an implemented feature.
+9. **CORS is closed by default.** A separately hosted frontend must set the exact `DRIFT_ALLOWED_ORIGIN`; wildcard access is only available when explicitly configured and is not recommended for production.
 10. **Analysis requests are expensive too.** yt-dlp metadata extraction needs shared concurrency limits, timeouts, and per-client quotas just like downloads.
 
 ### Existing protections worth retaining
@@ -49,7 +49,7 @@ Keep the frontend as a static site and the downloader as a separately deployable
 - **Database:** managed PostgreSQL for jobs, quotas, job ownership-token hashes, and lifecycle state.
 - **Media storage:** private object storage with short-lived signed download URLs and automatic lifecycle deletion. Do not use the application container's filesystem as durable storage.
 - **Limits:** shared per-IP and global concurrency limits; bounded queue; request/analysis quotas; maximum duration and file size; download expiry; storage TTL; egress controls; monitoring and spend alerts.
-- **Provider portability:** keep storage, queue, database, and downloader interfaces behind small adapters and use environment-based configuration. Avoid provider-specific logic in the frontend.
+- **Provider portability:** keep storage, queue, database, and downloader interfaces behind small adapters and use environment-based configuration. Avoid provider-specific logic in the frontend. See [backend architecture and migration plan](backend-architecture.md) for the proposed interfaces, request lifecycle, security requirements, and provider-neutral rollout.
 
 No visitor registration is required. A random, high-entropy job capability can authorize access to a single job without creating an account.
 
@@ -126,6 +126,11 @@ The static Vercel frontend alone is not a working Drift deployment. Do not ask t
 
 The GitHub Actions run for commit `91c60f6aac41bcc56aaaf1358f2a7c7ab90aaf83` completed successfully. It verifies the Python test suite, frontend build and JavaScript syntax, Compose configuration, and container build. Newer commits that make CORS fail closed by default and add a regression test are awaiting their own CI results.
 
-The branch now also includes bounded HTTP handler concurrency, FFmpeg probe and conversion timeouts, an HTTP idle-connection timeout, startup recovery for interrupted jobs, stricter URL port/control-character validation, and tests for these protections.
+The branch now also includes bounded HTTP handler concurrency, FFmpeg probe and conversion timeouts, an HTTP idle-connection timeout, startup recovery for interrupted jobs, stricter URL port/control-character validation, and tests for these protections. The latest readiness-checklist commit passed CI; the backend architecture document is a design plan only and does not claim provider adapters are implemented.
 
 A passing CI run verifies the tested code and build steps; it does **not** establish production readiness. In particular, the DNS/redirect egress risk remains unresolved until the hosting network enforces outbound restrictions. The current app must not be exposed as an unrestricted public downloader. Keep it to controlled testing until the target backend, durable shared services, trusted proxy boundary, and network egress policy are implemented and verified.
+
+
+## Backend architecture plan
+
+A provider-neutral target architecture and phased migration plan is documented in [backend-architecture.md](backend-architecture.md). It separates job persistence, durable queueing, media storage, and abuse controls, and records the security and operational requirements that must be satisfied before production deployment.
