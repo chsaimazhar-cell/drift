@@ -668,7 +668,7 @@ class SQLiteJobRepository:
         with DB_LOCK, db() as conn:
             conn.execute(
                 """UPDATE jobs SET status='cancelled', phase='Cancelled',
-                   message='Cancelling download…', updated_at=?
+                   message='Cancelling download…', lease_owner=NULL, lease_expires_at=NULL, updated_at=?
                    WHERE id=? AND status IN ('queued','downloading','processing')""",
                 (now(), job_id),
             )
