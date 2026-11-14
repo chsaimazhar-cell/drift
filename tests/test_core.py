@@ -537,13 +537,28 @@ class DriftHelperTests(unittest.TestCase):
             self.assertTrue(external.exists())
 
 
-    def test_local_job_queue_dispatches_work_and_shuts_down(self):
+    def test_local_job_queue_dispatches_job_id_and_shuts_down(self):
         queue = drift.LocalThreadPoolJobQueue(max_workers=1)
         completed = threading.Event()
+        job = {"id": "queue-contract-test", "url": "https://www.youtube.com/watch?v=test", "quality": "720p"}
+        with patch.object(drift, "JOB_REPOSITORY") as repository, patch.object(drift, "run_download") as worker:
+            repository.get.return_value = job
+            try:
+                future = queue.enqueue(job["id"])
+                future.result(timeout=2)
+                repository.get.assert_called_once_with(job["id"])
+                worker.assert_called_once_with(job["id"], job["url"], job["quality"])
+                self.assertTrue(future.done())
+            finally:
+                queue.shutdown(wait=True, cancel_pending=True)
+
+    def test_local_job_queue_rejects_unknown_job_ids(self):
+        queue = drift.LocalThreadPoolJobQueue(max_workers=1)
         try:
-            future = queue.enqueue(completed.set)
-            future.result(timeout=2)
-            self.assertTrue(completed.is_set())
+            with patch.object(drift, "JOB_REPOSITORY") as repository:
+                repository.get.return_value = None
+                with self.assertRaises(ValueError):
+                    queue.enqueue("missing-job")
         finally:
             queue.shutdown(wait=True, cancel_pending=True)
 
