@@ -383,6 +383,16 @@ class PostgresJobRepository:
             (max_attempts, max_attempts, max_attempts, max_attempts, timestamp, timestamp, timestamp),
             fetchall=True,
         )
+        # A terminal result may have been committed just before a worker lost
+        # connectivity and could not acknowledge it. Release only its expired lease.
+        self._execute(
+            "UPDATE drift_jobs SET lease_owner=NULL, lease_expires_at=NULL, "
+            "updated_at=COALESCE(to_timestamp(%s),NOW()) "
+            "WHERE status IN ('ready','failed','cancelled') "
+            "AND lease_expires_at IS NOT NULL "
+            "AND lease_expires_at<=COALESCE(to_timestamp(%s),NOW())",
+            (timestamp, timestamp),
+        )
         return rows
 
     def active_count(self):
