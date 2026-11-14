@@ -96,7 +96,7 @@ class DriftHelperTests(unittest.TestCase):
     def test_storage_budget_reserves_active_jobs_and_counts_ready_files(self):
         with tempfile.TemporaryDirectory() as temp:
             test_db = Path(temp) / "storage.sqlite3"
-            with patch.object(drift, "DB_PATH", test_db), patch.object(drift, "DOWNLOAD_ROOT", Path(temp)), patch.object(drift, "MAX_TOTAL_JOBS", 5), patch.object(drift, "MAX_DOWNLOAD_BYTES", 100), patch.object(drift, "MAX_STORAGE_BYTES", 280), patch.object(drift.shutil, "disk_usage", return_value=type("Usage", (), {"free": 10000})()):
+            with patch.object(drift, "DB_PATH", test_db), patch.object(drift, "DOWNLOAD_ROOT", Path(temp)), patch.object(drift, "MAX_TOTAL_JOBS", 5), patch.object(drift, "MAX_DOWNLOAD_BYTES", 100), patch.object(drift, "MAX_STORAGE_BYTES", 500), patch.object(drift.shutil, "disk_usage", return_value=type("Usage", (), {"free": 10000})()):
                 drift.init_db()
                 base = {
                     "status": "queued", "phase": "Queued",
