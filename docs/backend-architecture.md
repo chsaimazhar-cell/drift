@@ -126,3 +126,7 @@ must be refactored to use shared PostgreSQL state, private object storage,
 durable cancellation checks, and a worker-owned workspace before this runtime
 is connected to real downloads. No database driver, credentials, provider,
 worker service, or production connection is configured by this change.
+
+### Shared cancellation propagation in the worker runtime
+
+The PostgreSQL worker heartbeat now checks lease ownership at a configurable interval, defaulting to at most five seconds and never exceeding one third of the lease duration. When an API-side cancellation is committed to the shared PostgreSQL row and clears its lease, the worker detects the lost lease on its next heartbeat and signals the processor to stop. The downloader's lease-fenced repository then refuses further progress or ready-state writes. A unit test covers this cancellation signal path. This improves cancellation responsiveness at the worker boundary; it does **not** activate end-to-end PostgreSQL cancellation because the HTTP API still uses SQLite and process-local cancellation state until the API repository is migrated.
