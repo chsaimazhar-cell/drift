@@ -8,7 +8,7 @@
 
 The current backend in `drift.py` is a single Python process:
 - `ThreadingHTTPServer` serves the API and static files.
-- `ThreadPoolExecutor` runs downloads in the same process.
+- `LocalThreadPoolJobQueue` wraps a `ThreadPoolExecutor` and runs downloads in the same process; this adapter is in-memory and development-only.
 - SQLite stores job records.
 - Local disk stores source and converted media.
 - Queue limits, rate limits, cancellation events, and storage accounting are process-local.
@@ -57,7 +57,7 @@ Job IDs must remain high entropy and be treated as bearer capabilities unless a 
 - [x] Extract core SQLite job reads, updates, inserts, conditional ready transition, and local capacity reservation behind a `SQLiteJobRepository` adapter without changing API response shapes. This remains a local single-process adapter, not a shared production database.
 - [x] Move SQLite schema initialization, interrupted-job recovery, expiry/deletion, active-job counting, cancellation, and the core job CRUD/capacity operations behind the local repository adapter.
 - [x] Add a focused test for repository lifecycle operations.
-- [ ] Add broader repository contract tests and migration tests before introducing a managed database.
+- [ ] Add broader repository contract tests and migration tests before introducing a managed database.\n- [ ] Add storage and queue adapter contract tests beyond the current local lifecycle tests.
 - Extract local filesystem operations behind a storage interface.
 - Extract enqueue/claim operations behind a queue interface; keep the current single-process implementation explicitly marked development-only.
 - Add contract tests that run against the local adapters.
